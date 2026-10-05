@@ -1,0 +1,8 @@
+.git
+.sc
+node_modules
+target
+web/pkg
+.env*
+*.log
+build-pillbox-overnight.md

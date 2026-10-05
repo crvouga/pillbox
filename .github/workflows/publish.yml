@@ -1,0 +1,26 @@
+# Application validation precedes the shared infrastructure publishing contract.
+name: Publish image
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+  pull-requests: read
+jobs:
+  validate:
+    uses: ./.github/workflows/check.yml
+  pillbox:
+    needs: validate
+    uses: crvouga/workspace/.github/workflows/ci.yml@main
+    secrets:
+      DEPLOY_DISPATCH_TOKEN: ${{ secrets.DEPLOY_DISPATCH_TOKEN }}
+      CALLER_GITHUB_TOKEN: ${{ github.token }}
+    with:
+      service_id: pillbox
+      dockerfile: ./Dockerfile
+      context: .
+      image_owner: crvouga
+      image_prefix: chrisvouga
+      infra_github_repo: crvouga/workspace

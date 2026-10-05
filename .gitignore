@@ -1,0 +1,8 @@
+/target/
+/web/pkg/
+/.tools/
+/node_modules/
+.env*
+!.env.example
+*.log
+.DS_Store

@@ -174,7 +174,20 @@ export class ArenaHUD {
     }
     labels.sort((a, b) => a.screen[2] - b.screen[2]);
     const alive = new Set();
+    const placed = [];
     for (const l of labels.slice(0, 12)) {
+      const width = (l.name.length + 8) * 8 + 18;
+      let y = Math.round(l.screen[1]);
+      while (
+        placed.some(
+          (q) =>
+            Math.abs(l.screen[0] - q.x) < (width + q.width) / 2 + 8 &&
+            Math.abs(y - q.y) < 24,
+        )
+      )
+        y -= 26;
+      if (y < 90) continue;
+      placed.push({ x: l.screen[0], y, width });
       let el = this.nodes.get(l.id);
       if (!el) {
         el = document.createElement("div");
@@ -183,7 +196,7 @@ export class ArenaHUD {
         this.nodes.set(l.id, el);
       }
       el.textContent = `${l.name}  ${Math.round(l.screen[2])}m`;
-      el.style.transform = `translate(${Math.round(l.screen[0])}px,${Math.round(l.screen[1])}px) translate(-50%,-100%)`;
+      el.style.transform = `translate(${Math.round(l.screen[0])}px,${y}px) translate(-50%,-100%)`;
       alive.add(l.id);
     }
     for (const [id, el] of this.nodes)

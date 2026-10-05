@@ -21,9 +21,9 @@ is described in [overhaul](overhaul.md); deployment is excluded.
   migration artifact was introduced by the overhaul.
 - The Linux amd64 image `pillbox:overhaul` passed models/textures/audio, both WASM
   assets, alternate PORT, network acceptance and active-match SIGTERM/restart
-  recovery. Final recovered shutdown result: `f06729ca-5853-40bd-b2b6-3ad15a0ebace`.
+  recovery. Final recovered shutdown result: `4a295467-f14b-4bc9-9943-5d11931094c2`.
   Image ID reported locally:
-  `sha256:3403fe807cd858452d84e32b9eac56553858d33cc9937033979497ec07242253`.
+  `sha256:6be5106f73189b8e10b7a6d3f22db12405812cdd6dbece12051c415ebe5afd18`.
 - Native Metal GPU captures loaded every glTF scene/dependency and rendered all
   six first-person weapons and all three arena variants through the actual
   client systems. This found and corrected missing scene reflection registration

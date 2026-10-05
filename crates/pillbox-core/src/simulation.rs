@@ -113,6 +113,10 @@ pub struct GameEvent {
     pub target: Option<String>,
     pub weapon: Option<Weapon>,
     pub position: Option<Vec3>,
+    #[serde(default)]
+    pub endpoint: Option<Vec3>,
+    #[serde(default)]
+    pub announcement: bool,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Projectile {
@@ -164,6 +168,8 @@ pub struct World {
     event_id: u64,
     history: VecDeque<(u64, BTreeMap<String, Vec3>)>,
     zones: BTreeSet<(String, String)>,
+    physics: PhysicsMap,
+    pub navigation: Navigation,
 }
 
 fn rotate(v: Vec3, a: f32) -> Vec3 {
@@ -174,7 +180,7 @@ fn local(o: &MapObject, p: Vec3) -> Vec3 {
     rotate(p - o.position, -o.rotation)
 }
 /// Surface in local coordinates. Arch uses two posts and a lintel, ramps are actual slopes.
-fn local_top(o: &MapObject, p: Vec3, margin: f32) -> Option<f32> {
+pub(crate) fn local_top(o: &MapObject, p: Vec3, margin: f32) -> Option<f32> {
     let h = o.scale * 0.5;
     if p.x.abs() > h.x + margin || p.z.abs() > h.z + margin {
         return None;
@@ -200,19 +206,8 @@ fn local_top(o: &MapObject, p: Vec3, margin: f32) -> Option<f32> {
         _ => Some(h.y),
     }
 }
-fn overlaps(o: &MapObject, feet: Vec3) -> bool {
-    let p = local(o, feet);
-    let h = o.scale * 0.5;
-    let Some(top) = local_top(o, p, RADIUS) else {
-        return false;
-    };
-    if o.kind == Primitive::Arch && p.x.abs() < h.x * 0.65 - RADIUS && p.y + HEIGHT < h.y * 0.55 {
-        return false;
-    }
-    p.y < top - 0.005 && p.y + HEIGHT > -h.y + 0.005
-}
 pub fn position_clear(map: &Map, p: Vec3) -> bool {
-    !map.objects.iter().any(|o| o.kind.solid() && overlaps(o, p))
+    PhysicsMap::new(map).clear(p)
 }
 fn inside(o: &MapObject, p: Vec3) -> bool {
     let p = local(o, p);
@@ -229,7 +224,7 @@ fn solid_point(o: &MapObject, p: Vec3) -> bool {
     }
     local_top(o, p, 0.).is_some_and(|top| p.y >= -h.y && p.y <= top)
 }
-fn wall_distance(map: &Map, origin: Vec3, dir: Vec3, max: f32) -> f32 {
+pub(crate) fn wall_distance(map: &Map, origin: Vec3, dir: Vec3, max: f32) -> f32 {
     let mut closest = max;
     for o in map.objects.iter().filter(|o| o.kind.solid()) {
         let Some((near, far)) = ray_box(
@@ -282,6 +277,15 @@ fn ray_box(p: Vec3, d: Vec3, h: Vec3, max: f32) -> Option<(f32, f32)> {
 }
 /// Shared by the server and browser prediction. No wall-clock, IO, renderer or database dependency.
 pub fn move_player(map: &Map, p: &mut Player, input: Input, tick: u64) {
+    move_player_with_physics(map, &PhysicsMap::new(map), p, input, tick);
+}
+pub fn move_player_with_physics(
+    map: &Map,
+    physics: &PhysicsMap,
+    p: &mut Player,
+    input: Input,
+    tick: u64,
+) {
     if !p.alive || !input.valid() {
         return;
     }
@@ -310,47 +314,7 @@ pub fn move_player(map: &Map, p: &mut Player, input: Input, tick: u64) {
         p.grounded = false;
     }
     p.velocity.y = (p.velocity.y - gravity * DT).max(-40.);
-    for axis in [0, 2] {
-        let old = p.position;
-        p.position[axis] += p.velocity[axis] * DT;
-        if !position_clear(map, p.position) {
-            let top = map
-                .objects
-                .iter()
-                .filter(|o| o.kind.solid() && overlaps(o, p.position))
-                .filter_map(|o| {
-                    local_top(o, local(o, p.position), RADIUS).map(|y| y + o.position.y)
-                })
-                .fold(p.position.y, f32::max);
-            let step = Vec3::new(p.position.x, top, p.position.z);
-            if p.grounded && top - p.position.y <= 0.42 && position_clear(map, step) {
-                p.position = step;
-            } else {
-                p.position = old;
-                p.velocity[axis] = 0.;
-            }
-        }
-    }
-    let old = p.position;
-    p.position.y += p.velocity.y * DT;
-    p.grounded = false;
-    for o in &map.objects {
-        if !o.kind.solid() || !overlaps(o, p.position) {
-            continue;
-        }
-        let l = local(o, p.position);
-        if let Some(top) = local_top(o, l, RADIUS) {
-            let top = top + o.position.y;
-            if p.velocity.y <= 0. && old.y >= top - 0.45 {
-                p.position.y = top;
-                p.velocity.y = 0.;
-                p.grounded = true;
-            } else if p.velocity.y > 0. {
-                p.position.y = old.y;
-                p.velocity.y = 0.;
-            }
-        }
-    }
+    p.grounded = physics.move_capsule(&mut p.position, &mut p.velocity, DT, p.grounded);
     for o in &map.objects {
         if !inside(o, p.position + Vec3::Y * 0.3) {
             continue;
@@ -382,7 +346,11 @@ impl World {
         map.validate()?;
         mode.validate()?;
         map.compatible(&mode)?;
+        let physics = PhysicsMap::new(&map);
+        let navigation = Navigation::new(&map, &physics);
         let mut w = Self {
+            navigation,
+            physics,
             map,
             mode,
             tick: 0,
@@ -546,6 +514,8 @@ impl World {
             target,
             weapon,
             position,
+            endpoint: None,
+            announcement: false,
         });
         while self.events.len() > 48 {
             self.events.pop_front();
@@ -586,7 +556,13 @@ impl World {
             if input.seq > 0 {
                 p.ack = input.seq;
             }
-            move_player(&self.map, p, input, self.tick);
+            let old_grounded = p.grounded;
+            let old_velocity = p.velocity;
+            let old_position = p.position;
+            let old_weapon = p.weapon;
+            let old_reload = p.reload_at;
+            let old_shield = p.shield;
+            move_player_with_physics(&self.map, &self.physics, p, input, self.tick);
             if let Some(w) = input.weapon
                 && p.inventory.contains(&w)
                 && p.reload_at == 0
@@ -607,6 +583,49 @@ impl World {
             if self.tick > p.last_damage + 300 {
                 p.shield = (p.shield + 25. * DT).min(100.);
             }
+            let mut sounds = vec![];
+            if input.jump && old_grounded && !p.grounded {
+                sounds.push("jump");
+            }
+            if !p.grounded && p.velocity.y > 10. && old_velocity.y <= 1. {
+                sounds.push("jump_pad");
+            }
+            if !old_grounded && p.grounded && old_velocity.y < -1. {
+                sounds.push("land");
+            }
+            if p.position.distance(old_position) > 3. {
+                sounds.push("teleport");
+            }
+            if p.weapon != old_weapon {
+                sounds.push("weapon_switch");
+            }
+            if old_reload == 0 && p.reload_at > 0 {
+                sounds.push("reload");
+            }
+            if old_reload > 0 && p.reload_at == 0 {
+                sounds.push("reload_complete");
+            }
+            if old_shield == 0. && p.shield > 0. {
+                sounds.push("shield_recharge");
+            }
+            if p.grounded && p.velocity.length_squared() > 5. && self.tick.is_multiple_of(22) {
+                sounds.push("footstep");
+            }
+            if input.fire && p.ammo() == 0 && self.tick.is_multiple_of(30) {
+                sounds.push("dry_fire");
+            }
+            let sound_position = p.position;
+            let sound_weapon = p.weapon;
+            for sound in sounds {
+                self.emit(
+                    sound,
+                    Some(id.clone()),
+                    None,
+                    Some(sound_weapon),
+                    Some(sound_position),
+                );
+            }
+            let p = &self.players[id];
             if p.position.y < -40.
                 || p.position.abs().max_element() > 300.
                 || self
@@ -674,7 +693,9 @@ impl World {
         p.deaths = old.deaths;
         p.ack = old.ack;
         p.last_damage = self.tick;
+        let position = p.position;
         self.players.insert(id.into(), p);
+        self.emit("respawn", Some(id.into()), None, None, Some(position));
         self.rules(EventKind::PlayerSpawned, id, None, None);
     }
     fn fire(&mut self, id: &str, view_tick: u64) {
@@ -696,6 +717,8 @@ impl World {
             -yaw.cos() * pitch.cos(),
         );
         self.emit("shot", Some(id.into()), None, Some(weapon), Some(origin));
+        let endpoint = origin + aim * wall_distance(&self.map, origin, aim, 80.);
+        self.events.back_mut().unwrap().endpoint = Some(endpoint);
         if stats.speed > 0. {
             self.projectiles.push(Projectile {
                 owner: id.into(),
@@ -763,17 +786,32 @@ impl World {
         if !v.alive {
             return;
         }
+        let previous_shield = v.shield;
         let shield = v.shield.min(amount);
         v.shield -= shield;
         v.health = (v.health - (amount - shield)).max(0.);
         v.last_damage = self.tick;
         if v.health > 0. {
+            let kind = if previous_shield > 0. && v.shield == 0. {
+                "shield_broken"
+            } else {
+                "hit"
+            };
+            let position = v.position;
+            self.emit(
+                kind,
+                Some(attacker.into()),
+                Some(victim.into()),
+                Some(weapon),
+                Some(position),
+            );
             return;
         }
         v.alive = false;
         v.deaths += 1;
         v.streak = 0;
         v.respawn_at = self.tick + u64::from(self.mode.respawn_seconds) * 60;
+        let death_position = v.position;
         self.drop_flag(victim);
         let kill_tick = self.tick;
         if attacker != victim
@@ -811,7 +849,7 @@ impl World {
             Some(attacker.into()),
             Some(victim.into()),
             Some(weapon),
-            None,
+            Some(death_position),
         );
         self.rules(EventKind::PlayerKilled, attacker, Some(victim), None);
     }
@@ -908,6 +946,20 @@ impl World {
                 _ => false,
             };
             if used {
+                let kind = match o.kind {
+                    Primitive::HealthPickup => "health_pickup",
+                    Primitive::ShieldPickup => "shield_pickup",
+                    Primitive::WeaponSpawn => "weapon_pickup",
+                    _ => "ammo_pickup",
+                };
+                let weapon = p.weapon;
+                self.emit(
+                    kind,
+                    Some(id.into()),
+                    Some(o.id.clone()),
+                    Some(weapon),
+                    Some(o.position),
+                );
                 self.pickups.insert(
                     o.id.clone(),
                     self.tick + u64::from(o.properties.respawn_seconds) * 60,
@@ -1183,7 +1235,10 @@ impl World {
                 }
                 Effect::RemoveItem => self.drop_flag(actor),
                 Effect::ResetFlags => self.reset_flags(),
-                Effect::Announce { text } => self.emit(&text, Some(actor.into()), None, None, None),
+                Effect::Announce { text } => {
+                    self.emit(&text, Some(actor.into()), None, None, None);
+                    self.events.back_mut().unwrap().announcement = true;
+                }
             }
         }
         if changed {

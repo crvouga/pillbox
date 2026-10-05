@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#101320" />
-    <title>Pillbox — Small shapes. Big games.</title>
+    <title>Pillbox — Take the high ground.</title>
     <link rel="stylesheet" href="/style.css" />
   </head>
   <body>
@@ -13,7 +13,7 @@
       <header>
         <a class="brand" href="/" aria-label="Pillbox home"
           ><span class="pill-logo"></span>PILLBOX<span class="alpha"
-            >LAB 01</span
+            >ARENA 02</span
           ></a
         >
         <nav>
@@ -26,18 +26,30 @@
       <main id="servers" class="page">
         <section class="hero">
           <div class="eyebrow">A MULTIPLAYER PLAYGROUND</div>
-          <h1>Small shapes.<br /><span>Big games.</span></h1>
+          <h1>Take the<br /><span>high ground.</span></h1>
           <p>
-            Build a strange little world. Make your own rules.<br />Then invite
-            a few friends to blow it all up.
+            Three floors. Six weapons. No safe corners.<br />Jump into a
+            skirmish, or build your own arena.
+          </p>
+          <div class="practice-picker">
+            <select id="practice-map" aria-label="Practice arena">
+              <option value="0">Foundry Nine — industrial</option>
+              <option value="1">Helix Station — orbital</option>
+              <option value="2">Blacksite Relay — night ops</option></select
+            ><button id="quick-play" class="primary">
+              PLAY NOW <span>↗</span>
+            </button>
+          </div>
+          <p class="practice-note">
+            Solo practice · 3 opponents · 5-minute skirmish
           </p>
           <div class="actions">
             <button id="host-open" class="primary">＋ Create a server</button
             ><button data-page="sandbox">Enter the sandbox ↗</button>
           </div>
           <div class="hero-note">
-            <span class="live-dot"></span> Browser-first. Player-made.
-            Completely geometric.
+            <span class="live-dot"></span> Vertical arenas. Real physics.
+            Player-made worlds.
           </div>
         </section>
         <section class="browser-panel">
@@ -155,6 +167,19 @@
                   id="rotation"
                   type="number"
                   step="15" /></label
+              ><label>HUD label<input id="object-label" maxlength="64" /></label
+              ><label
+                >Station model<select id="object-asset">
+                  <option value="">Primitive geometry</option>
+                  <option>container</option>
+                  <option>container-wide</option>
+                  <option>container-tall</option>
+                  <option>computer</option>
+                  <option>computer-wide</option>
+                  <option>pipe</option>
+                  <option>pipe-bend</option>
+                  <option>structure-panel</option>
+                </select></label
               ><label>Color<input id="object-color" type="color" /></label
               ><label
                 >Team<select id="object-team">
@@ -294,7 +319,16 @@
       <div id="announcement" role="status"></div>
       <div id="phase-banner"></div>
       <div id="kill-feed"></div>
-      <div id="crosshair">＋</div>
+      <div id="crosshair"><i></i><i></i><i></i><i></i></div>
+      <div id="hitmarker">×</div>
+      <div id="object-labels" aria-hidden="true"></div>
+      <div id="object-context"></div>
+      <canvas
+        id="radar"
+        width="144"
+        height="144"
+        aria-label="Arena radar"
+      ></canvas>
       <div id="damage-flash"></div>
       <div id="hud">
         <div>
@@ -312,14 +346,35 @@
       </div>
       <div id="controls">
         Click arena to aim · WASD move · Space jump · Click fire · R reload ·
-        1–6 weapons · Tab scoreboard · Esc release mouse
+        1–6 weapons · RMB aim · Tab scores · Esc release mouse
       </div>
       <section id="scoreboard" class="panel hidden">
         <h2>Scoreboard</h2>
         <div id="score-rows"></div>
         <p id="result-status"></p>
       </section>
-      <button id="sound" class="sound">Announcer: on</button>
+      <div class="game-settings">
+        <button id="sound">Announcer: on</button
+        ><button id="mute">Audio ON</button
+        ><button id="keyboard-aim">Keyboard aim</button
+        ><label
+          >Volume<input
+            id="volume"
+            type="range"
+            min="0"
+            max="1"
+            step="0.05"
+            value="0.7" /></label
+        ><label
+          >Mouse<input
+            id="sensitivity"
+            type="range"
+            min="1"
+            max="10"
+            step="0.5"
+            value="5"
+        /></label>
+      </div>
     </div>
     <dialog id="welcome">
       <form id="welcome-form">
@@ -367,6 +422,15 @@
             </select></label
           >
         </div>
+        <label
+          >Practice opponents<select id="server-bots">
+            <option value="0">Humans only</option>
+            <option value="1">1 bot</option>
+            <option value="2">2 bots</option>
+            <option value="3">3 bots</option>
+            <option value="4">4 bots</option>
+          </select></label
+        >
         <p class="muted">
           Invite-only servers are unlisted. Anyone with the link can join.
         </p>
@@ -377,6 +441,7 @@
       </form>
     </dialog>
     <div id="toast" role="status" class="hidden"></div>
+    <output id="diagnostics" hidden aria-hidden="true"></output>
     <script type="module" src="/app.js"></script>
   </body>
 </html>

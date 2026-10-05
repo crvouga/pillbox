@@ -1,4 +1,8 @@
 import { Editor, weapons } from "./editor.js";
+import { ArenaAudio } from "./audio.js";
+import { ArenaHUD } from "./hud.js";
+const audio = new ArenaAudio(),
+  arenaHud = new ArenaHUD();
 const $ = (id) => document.getElementById(id),
   clone = (v) => structuredClone(v),
   label = (s) => s.replaceAll("_", " ");
@@ -29,6 +33,11 @@ let user,
   weapon = null,
   reload = false,
   speech = true,
+  keyboardAim = false,
+  gameActive = false,
+  ads = false,
+  recoil = 0,
+  sensitivity = 0.0025,
   preview = false,
   networkRtt = 0,
   lastShot = 0;
@@ -218,6 +227,7 @@ async function refreshServers() {
         try {
           await refreshContent();
           configuring = r.id;
+          $("server-bots").value = r.config.practice_bots || 0;
           $("server-name").value = r.config.name;
           $("server-map").value = r.config.map_version;
           $("server-mode").value = r.config.mode_version;
@@ -263,6 +273,7 @@ $("host-form").onsubmit = async (e) => {
         visibility: $("server-visibility").value,
         map_version: $("server-map").value,
         mode_version: $("server-mode").value,
+        practice_bots: +$("server-bots").value,
       },
     );
     $("host-dialog").close();
@@ -390,6 +401,16 @@ async function join(id) {
   room = data;
   state = data.state;
   renderer.set_map(JSON.stringify(data.map));
+  arenaHud.setMap(data.map);
+  // Invite navigation may have no gesture: suspended audio must never hold
+  // the WebSocket join open. A later arena/keyboard click unlocks sound.
+  audio
+    .unlock()
+    .then(() => {
+      if (room === data) audio.atmosphere(true);
+    })
+    .catch((e) => console.warn("Audio activation failed", e));
+  gameActive = false;
   predicted = null;
   pending = [];
   snapshots = [];
@@ -400,6 +421,8 @@ async function join(id) {
   matchId = data.server.match_id;
   finalResult = null;
   aim = { yaw: 0, pitch: 0 };
+  lastShot = 0;
+  recoil = 0;
   keys.clear();
   fire = false;
   document.body.classList.add("playing");
@@ -436,6 +459,9 @@ async function join(id) {
 }
 function leave() {
   const socket = ws;
+  audio.atmosphere(false);
+  gameActive = false;
+  ads = false;
   ws = null;
   room = null;
   socket?.close();
@@ -464,7 +490,7 @@ action("invite", async () => {
 action("sound", () => {
   speech = !speech;
   $("sound").textContent = "Announcer: " + (speech ? "on" : "off");
-  if (!speech) speechSynthesis.cancel();
+  audio.voiceEnabled = speech;
 });
 function receive(packet) {
   const old = state;
@@ -477,6 +503,11 @@ function receive(packet) {
   while (snapshots.length > 8) snapshots.shift();
   const local = state.players.find((p) => p.id === user.id);
   if (local) {
+    const previous = old?.players.find((p) => p.id === user.id);
+    if (!predicted || (previous && !previous.alive && local.alive)) {
+      aim.yaw = Math.atan2(-local.position[0], local.position[2]);
+      aim.pitch = 0;
+    }
     if (sent.has(local.ack)) {
       networkRtt = performance.now() - sent.get(local.ack);
     }
@@ -493,7 +524,6 @@ function receive(packet) {
         state.tick,
       ),
     );
-    const previous = old?.players.find((p) => p.id === user.id);
     if (
       previous &&
       previous.health + previous.shield > local.health + local.shield
@@ -505,6 +535,24 @@ function receive(packet) {
   for (const event of state.events) {
     if (event.id <= lastEvent) continue;
     lastEvent = event.id;
+    if (!old || event.tick < state.tick - 30) continue;
+    audio.event(event, user.id);
+    if (event.kind === "shot" && event.actor === user.id) {
+      recoil = 1;
+      lastShot = performance.now();
+      $("crosshair").classList.add("firing");
+      setTimeout(() => $("crosshair").classList.remove("firing"), 90);
+    }
+    if (
+      ["hit", "shield_broken", "player_killed"].includes(event.kind) &&
+      event.actor === user.id &&
+      event.target !== user.id
+    ) {
+      $("hitmarker").classList.add(
+        event.kind === "player_killed" ? "kill" : "hit",
+      );
+      setTimeout(() => $("hitmarker").classList.remove("hit", "kill"), 200);
+    }
     if (event.kind === "player_killed") {
       const entry = document.createElement("div");
       const name = (id) =>
@@ -512,7 +560,30 @@ function receive(packet) {
       entry.textContent = `${name(event.actor)} eliminated ${name(event.target)} · ${label(event.weapon || "arena")}`;
       $("kill-feed").prepend(entry);
       setTimeout(() => entry.remove(), 6000);
-    } else if (event.kind !== "shot" && event.kind !== "explosion") {
+    } else if (event.announcement) {
+      announce(event.kind);
+    } else if (
+      [
+        "match_starting",
+        "match_started",
+        "match_over",
+        "double_kill",
+        "triple_kill",
+        "killing_spree",
+        "one_minute_remaining",
+        "thirty_seconds_remaining",
+        "flag_taken",
+        "flag_returned",
+        "flag_captured",
+        "flag_dropped",
+        "hill_controlled",
+        "hill_contested",
+      ].includes(event.kind) &&
+      (!event.actor ||
+        event.actor === user.id ||
+        event.kind.startsWith("flag") ||
+        event.kind.startsWith("hill"))
+    ) {
       announce(event.kind);
     }
   }
@@ -560,16 +631,13 @@ function announce(kind) {
   $("announcement").textContent = text.toUpperCase();
   clearTimeout(announce.timer);
   announce.timer = setTimeout(() => ($("announcement").textContent = ""), 2600);
-  if (speech && "speechSynthesis" in window) {
-    speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = 1.05;
-    utterance.volume = 0.55;
-    speechSynthesis.speak(utterance);
-  }
+  if (speech) audio.announce(kind);
 }
 function updateHud() {
   if (!state || !room) return;
+  $("controls").textContent = keyboardAim
+    ? "WASD move · Arrow keys aim · F fire · Space jump · R reload · 1 Pistol / 2 Rifle / 3–6 power weapons · Tab scores"
+    : "Click arena to aim · WASD move · Space jump · Click fire · R reload · 1 Pistol / 2 Rifle / 3–6 power weapons · RMB aim · Tab scores · Esc release mouse";
   const p = state.players.find((p) => p.id === user.id);
   if (p) {
     $("shield").value = p.shield;
@@ -594,7 +662,7 @@ function updateHud() {
           ? "Match complete"
           : !p?.alive
             ? `Respawning in ${Math.max(1, Math.ceil((p.respawn_at - state.tick) / 60))}…`
-            : document.pointerLockElement
+            : document.pointerLockElement || (keyboardAim && gameActive)
               ? ""
               : "Click the arena to aim";
   $("match-start").disabled =
@@ -649,8 +717,7 @@ function updateHud() {
   }
 }
 function localInput() {
-  const active =
-    document.pointerLockElement === $("game") && state?.phase === "playing";
+  const active = gameActive && state?.phase === "playing";
   return {
     seq: ++seq,
     x: active ? Number(keys.has("KeyD")) - Number(keys.has("KeyA")) : 0,
@@ -658,7 +725,7 @@ function localInput() {
     yaw: aim.yaw,
     pitch: aim.pitch,
     jump: active && keys.has("Space"),
-    fire: active && fire,
+    fire: active && (fire || keys.has("KeyF")),
     reload: active && reload,
     weapon: active ? weapon : null,
     view_tick: Math.max(0, nowTick - 6),
@@ -668,6 +735,9 @@ window.addEventListener("keydown", (e) => {
   if (!room) return;
   if (["Space", "Tab", "KeyW", "KeyA", "KeyS", "KeyD"].includes(e.code))
     e.preventDefault();
+  if (e.target instanceof Element && e.target.matches("input,select,textarea"))
+    return;
+  if (e.code.startsWith("Arrow") || e.code === "KeyF") e.preventDefault();
   keys.add(e.code);
   if (e.code === "Tab") {
     scoreHeld = true;
@@ -689,6 +759,8 @@ window.addEventListener("blur", () => {
   keys.clear();
   fire = false;
   reload = false;
+  ads = false;
+  gameActive = false;
 });
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
@@ -707,6 +779,18 @@ document.addEventListener("pointerlockchange", () => {
 $("game").addEventListener("mousedown", (e) => {
   if (!room) return;
   if (document.pointerLockElement !== $("game")) {
+    gameActive = true;
+    audio
+      .unlock()
+      .then(() => {
+        if (room && !audio.ambience.length) audio.atmosphere(true);
+      })
+      .catch((e) => console.warn("Audio activation failed", e));
+    if (keyboardAim) {
+      if (e.button === 0) fire = true;
+      if (e.button === 2) ads = true;
+      return;
+    }
     const lock = $("game").requestPointerLock?.();
     lock?.catch(() =>
       notify("Click the focused arena window to enable mouse aiming."),
@@ -714,18 +798,41 @@ $("game").addEventListener("mousedown", (e) => {
     return;
   }
   if (e.button === 0) fire = true;
+  if (e.button === 2) ads = true;
 });
-window.addEventListener("mouseup", () => (fire = false));
+window.addEventListener("mouseup", () => {
+  fire = false;
+  ads = false;
+});
 window.addEventListener("mousemove", (e) => {
   if (document.pointerLockElement !== $("game")) return;
-  aim.yaw = (aim.yaw + e.movementX * 0.0025) % (Math.PI * 2);
-  aim.pitch = Math.max(-1.5, Math.min(1.5, aim.pitch - e.movementY * 0.0025));
+  aim.yaw =
+    (aim.yaw + e.movementX * sensitivity * (ads ? 0.6 : 1)) % (Math.PI * 2);
+  aim.pitch = Math.max(
+    -1.5,
+    Math.min(1.5, aim.pitch - e.movementY * sensitivity * (ads ? 0.6 : 1)),
+  );
 });
 $("game").oncontextmenu = (e) => e.preventDefault();
 function animate(time) {
   const dt = Math.min((time - lastFrame) / 1000, 0.1);
   lastFrame = time;
   accumulator += dt;
+  recoil = Math.max(0, recoil - dt * 9);
+  if (keyboardAim && gameActive) {
+    aim.yaw +=
+      (Number(keys.has("ArrowRight")) - Number(keys.has("ArrowLeft"))) *
+      dt *
+      1.6;
+    aim.pitch = Math.max(
+      -1.5,
+      Math.min(
+        1.5,
+        aim.pitch +
+          (Number(keys.has("ArrowUp")) - Number(keys.has("ArrowDown"))) * dt,
+      ),
+    );
+  }
   if (ws?.readyState === WebSocket.OPEN) {
     let steps = 0;
     while (accumulator >= 1 / 60 && steps++ < 6) {
@@ -783,6 +890,8 @@ function animate(time) {
         }
       }
       if (predicted) {
+        audio.listener(predicted);
+        arenaHud.update(predicted, state, time, ads, room.mode.teams);
         predicted.yaw = aim.yaw;
         predicted.pitch = aim.pitch;
       }
@@ -793,6 +902,8 @@ function animate(time) {
           predicted,
           camera: null,
           target: null,
+          recoil,
+          ads,
         }),
       );
     } else {
@@ -807,6 +918,11 @@ function animate(time) {
         }),
       );
     }
+  }
+  const diagnostic = $("diagnostics");
+  if (diagnostic && time - (animate.lastDiagnostic || 0) > 250) {
+    diagnostic.textContent = JSON.stringify(getDiagnostics());
+    animate.lastDiagnostic = time;
   }
   requestAnimationFrame(animate);
 }
@@ -854,3 +970,147 @@ setInterval(() => {
     ws.send(JSON.stringify(input));
   }
 }, 1000);
+
+document.addEventListener("pointerdown", () => audio.unlock().catch(() => {}), {
+  passive: true,
+});
+action("keyboard-aim", () => {
+  audio
+    .unlock()
+    .then(() => {
+      if (room && !audio.ambience.length) audio.atmosphere(true);
+    })
+    .catch((e) => console.warn("Audio activation failed", e));
+  keyboardAim = !keyboardAim;
+  gameActive = true;
+  document.exitPointerLock?.();
+  $("keyboard-aim").textContent = keyboardAim
+    ? "Keyboard aim: ON"
+    : "Keyboard aim";
+  notify(
+    keyboardAim
+      ? "WASD move · Arrow keys aim · F fires · Space jumps · R reloads"
+      : "Click the arena to use mouse aiming",
+  );
+});
+$("volume").oninput = () => audio.setVolume(Number($("volume").value));
+$("sensitivity").oninput = () =>
+  (sensitivity = Number($("sensitivity").value) * 0.0005);
+action("mute", () => {
+  audio.setEnabled(!audio.enabled);
+  $("mute").textContent = audio.enabled ? "Audio ON" : "Audio OFF";
+});
+async function practice(index = 0) {
+  if (!user) {
+    $("welcome").showModal();
+    return;
+  }
+  audio.unlock().catch((e) => console.warn("Audio activation failed", e));
+  $("quick-play").disabled = true;
+  try {
+    await refreshContent();
+    const map = templates.maps[index];
+    // Published copies are immutable. Match complete current template content
+    // so an earlier practice copy cannot silently retain outdated geometry.
+    const signature = (value) =>
+      JSON.stringify(value, (_, v) =>
+        v && typeof v === "object" && !Array.isArray(v)
+          ? Object.fromEntries(
+              Object.entries(v).sort(([a], [b]) => a.localeCompare(b)),
+            )
+          : v,
+      );
+    const practiceMode = {
+      ...templates.modes[0],
+      name: "Arena Skirmish",
+      score_limit: 15,
+      time_limit: 300,
+      respawn_seconds: 3,
+    };
+    let mv = maps.find(
+      (v) =>
+        v.published &&
+        v.owner_id === user.id &&
+        signature(v.document) === signature(map),
+    );
+    let gv = modes.find(
+      (v) =>
+        v.published &&
+        v.owner_id === user.id &&
+        signature(v.document) === signature(practiceMode),
+    );
+    if (!mv) {
+      mv = await api("/content/maps", "POST", {
+        content_id: maps.find(
+          (v) => v.owner_id === user.id && v.document.name === map.name,
+        )?.content_id,
+        document: map,
+      });
+      await api(`/content/maps/${mv.id}/publish`, "POST");
+    }
+    if (!gv) {
+      gv = await api("/content/modes", "POST", {
+        content_id: modes.find(
+          (v) =>
+            v.owner_id === user.id && v.document.name === practiceMode.name,
+        )?.content_id,
+        document: practiceMode,
+      });
+      await api(`/content/modes/${gv.id}/publish`, "POST");
+    }
+    const servers = await api("/servers");
+    let r = servers.find(
+      (r) =>
+        r.owner === user.id &&
+        r.config.map_version === mv.id &&
+        r.config.practice_bots === 3,
+    );
+    if (!r)
+      r = await api("/servers", "POST", {
+        name: map.name + " · PRACTICE",
+        visibility: "unlisted",
+        max_players: 8,
+        map_version: mv.id,
+        mode_version: gv.id,
+        practice_bots: 3,
+      });
+    await join(r.id);
+    await new Promise((resolve, reject) => {
+      if (ws.readyState === WebSocket.OPEN) return resolve();
+      ws.addEventListener("open", resolve, { once: true });
+      ws.addEventListener("error", reject, { once: true });
+    });
+    if (["waiting", "finished"].includes(r.phase))
+      await api(`/servers/${r.id}/start`, "POST");
+  } finally {
+    $("quick-play").disabled = false;
+  }
+}
+action("quick-play", () => practice(+$("practice-map").value));
+// Read-only diagnostics for playtesting: never grants authority to the client.
+export function getDiagnostics() {
+  return {
+    phase: state?.phase,
+    room: room?.server.id,
+    renderer: document.body.dataset.rendererPhase,
+    position: predicted?.position,
+    weapon: predicted?.weapon,
+    ammo: predicted?.magazines,
+    health: predicted?.health,
+    shield: predicted?.shield,
+    players: state?.players.map((p) => ({
+      id: p.id,
+      name: p.name,
+      position: p.position,
+      kills: p.kills,
+      deaths: p.deaths,
+    })),
+    input: { active: gameActive, keyboardAim, keys: [...keys] },
+    audio: {
+      state: audio.ctx?.state,
+      enabled: audio.enabled,
+      metrics: audio.metrics,
+    },
+    labels: arenaHud.nodes.size,
+  };
+}

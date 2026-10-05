@@ -4,7 +4,11 @@ use bevy::{
     mesh::{Indices, PrimitiveTopology},
     prelude::*,
 };
-use pillbox_core::{Input, Map, Player, Primitive, Snapshot};
+use bevy::{
+    camera::visibility::RenderLayers,
+    light::{CascadeShadowConfigBuilder, DirectionalLightShadowMap, NotShadowCaster},
+};
+use pillbox_core::{Input, Map, Player, Primitive, Snapshot, Weapon};
 use serde::Deserialize;
 use std::sync::{Mutex, OnceLock};
 #[cfg(target_arch = "wasm32")]
@@ -14,6 +18,7 @@ struct Bridge {
     map: Option<Map>,
     frame: Option<Frame>,
     prediction_map: Option<Map>,
+    physics: Option<pillbox_core::PhysicsMap>,
     prediction: Option<Player>,
 }
 static BRIDGE: OnceLock<Mutex<Bridge>> = OnceLock::new();
@@ -27,6 +32,10 @@ struct Frame {
     predicted: Option<Player>,
     camera: Option<[f32; 3]>,
     target: Option<[f32; 3]>,
+    #[serde(default)]
+    recoil: f32,
+    #[serde(default)]
+    ads: bool,
 }
 #[derive(Resource, Default)]
 struct Scene {
@@ -43,6 +52,21 @@ struct Pill(String);
 struct Dynamic;
 #[derive(Component)]
 struct ViewCamera;
+#[derive(Component)]
+struct GunCamera;
+#[derive(Component)]
+struct HeldWeapon(Weapon);
+#[derive(Component)]
+struct RemoteWeapon {
+    id: String,
+    weapon: Weapon,
+}
+#[derive(Component)]
+struct Flash(f32);
+#[derive(Resource, Default)]
+struct Effects {
+    last_event: u64,
+}
 #[derive(Resource)]
 struct Palette {
     pill: Handle<Mesh>,
@@ -55,6 +79,7 @@ struct Palette {
 pub fn set_map(json: &str) -> Result<(), String> {
     let map: Map = serde_json::from_str(json).map_err(|e| e.to_string())?;
     let mut b = bridge().lock().unwrap();
+    b.physics = Some(pillbox_core::PhysicsMap::new(&map));
     b.prediction_map = Some(map.clone());
     b.map = Some(map);
     Ok(())
@@ -69,9 +94,15 @@ pub fn reconcile(player: &str, pending: &str, tick: u32) -> Result<String, Strin
     let mut p: Player = serde_json::from_str(player).map_err(|e| e.to_string())?;
     let inputs: Vec<Input> = serde_json::from_str(pending).map_err(|e| e.to_string())?;
     let mut b = bridge().lock().unwrap();
-    if let Some(map) = &b.prediction_map {
+    if let (Some(map), Some(physics)) = (&b.prediction_map, &b.physics) {
         for (i, input) in inputs.into_iter().take(120).enumerate() {
-            pillbox_core::move_player(map, &mut p, input, u64::from(tick) + i as u64 + 1);
+            pillbox_core::move_player_with_physics(
+                map,
+                physics,
+                &mut p,
+                input,
+                u64::from(tick) + i as u64 + 1,
+            );
         }
     }
     let result = serde_json::to_string(&p).unwrap();
@@ -84,41 +115,75 @@ pub fn predict(input: &str, tick: u32) -> Result<String, String> {
     let mut b = bridge().lock().unwrap();
     let Bridge {
         prediction_map,
+        physics,
         prediction,
         ..
     } = &mut *b;
-    if let (Some(map), Some(p)) = (prediction_map, prediction) {
-        pillbox_core::move_player(map, p, input, u64::from(tick));
+    if let (Some(map), Some(physics), Some(p)) = (prediction_map, physics, prediction) {
+        pillbox_core::move_player_with_physics(map, physics, p, input, u64::from(tick));
         return Ok(serde_json::to_string(p).unwrap());
     }
     Err("No local player".into())
 }
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 pub fn run() {
-    App::new()
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
+    build_app(false).run();
+}
+fn build_app(headless: bool) -> App {
+    let mut app = App::new();
+    let plugins = DefaultPlugins
+        .set(AssetPlugin {
+            meta_check: bevy::asset::AssetMetaCheck::Never,
+            file_path: if cfg!(target_arch = "wasm32") {
+                ".".into()
+            } else {
+                concat!(env!("CARGO_MANIFEST_DIR"), "/../../web").into()
+            },
+            ..default()
+        })
+        .set(WindowPlugin {
+            primary_window: (!headless).then_some(Window {
                 title: "Pillbox".into(),
+                resolution: bevy::window::WindowResolution::new(1280, 720)
+                    .with_scale_factor_override(1.),
                 canvas: Some("#game".into()),
                 fit_canvas_to_parent: true,
                 prevent_default_event_handling: false,
                 ..default()
             }),
+            exit_condition: bevy::window::ExitCondition::DontExit,
             ..default()
-        }))
-        .insert_resource(ClearColor(Color::srgb(0.06, 0.08, 0.16)))
+        });
+    if headless {
+        app.add_plugins(plugins.disable::<bevy::winit::WinitPlugin>());
+    } else {
+        app.add_plugins(plugins);
+    }
+    app.insert_resource(ClearColor(Color::srgb(0.06, 0.08, 0.16)))
         .insert_resource(GlobalAmbientLight {
             color: Color::WHITE,
-            brightness: 500.,
+            brightness: 160.,
             ..default()
         })
+        .insert_resource(DirectionalLightShadowMap { size: 2048 })
+        .init_resource::<Effects>()
         .init_resource::<Scene>()
         .add_systems(Startup, setup)
         .add_systems(
             Update,
-            (receive, render_players, render_camera, render_pickups).chain(),
-        )
-        .run();
+            (
+                receive,
+                render_players,
+                render_camera,
+                render_weapon,
+                remote_weapons,
+                weapon_layers,
+                render_pickups,
+                combat_effects,
+            )
+                .chain(),
+        );
+    app
 }
 fn setup(
     mut commands: Commands,
@@ -128,17 +193,66 @@ fn setup(
     commands.spawn((
         Camera3d::default(),
         bevy::core_pipeline::tonemapping::Tonemapping::None,
+        Projection::Perspective(PerspectiveProjection {
+            fov: 85_f32.to_radians(),
+            near: 0.05,
+            ..default()
+        }),
+        DistanceFog {
+            color: Color::srgb(0.07, 0.11, 0.16),
+            falloff: FogFalloff::Linear {
+                start: 22.,
+                end: 100.,
+            },
+            ..default()
+        },
         Msaa::Off,
         Transform::from_xyz(34., 30., 34.).looking_at(Vec3::ZERO, Vec3::Y),
         ViewCamera,
     ));
     commands.spawn((
         DirectionalLight {
-            illuminance: 5000.,
-            shadows_enabled: false,
+            illuminance: 9000.,
+            color: Color::srgb(0.76, 0.86, 1.),
+            shadows_enabled: true,
             ..default()
         },
-        Transform::from_rotation(Quat::from_euler(EulerRot::XYZ, -0.9, -0.6, 0.)),
+        Transform::from_rotation(Quat::from_euler(EulerRot::XYZ, -0.8, -0.5, 0.)),
+        CascadeShadowConfigBuilder {
+            num_cascades: 2,
+            maximum_distance: 85.,
+            ..default()
+        }
+        .build(),
+        RenderLayers::from_layers(&[0, 1]),
+    ));
+    commands.spawn((
+        Camera3d::default(),
+        bevy::core_pipeline::tonemapping::Tonemapping::None,
+        Camera {
+            order: 1,
+            clear_color: ClearColorConfig::None,
+            ..default()
+        },
+        Projection::Perspective(PerspectiveProjection {
+            fov: 70_f32.to_radians(),
+            near: 0.02,
+            ..default()
+        }),
+        Transform::default(),
+        RenderLayers::layer(1),
+        Msaa::Off,
+        GunCamera,
+    ));
+    commands.spawn((
+        PointLight {
+            intensity: 2500.,
+            range: 6.,
+            color: Color::srgb(0.8, 0.9, 1.),
+            ..default()
+        },
+        Transform::from_xyz(0., 1., 2.),
+        RenderLayers::layer(1),
     ));
     commands.insert_resource(Palette {
         pill: meshes.add(Capsule3d::new(0.4, 1.0)),
@@ -201,8 +315,10 @@ fn receive(
     geometry: Query<Entity, With<Geometry>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut clear: ResMut<ClearColor>,
+    assets: Res<AssetServer>,
+    background: (ResMut<ClearColor>, ResMut<Effects>),
 ) {
+    let (mut clear, mut effects) = background;
     let mut bridge = bridge().lock().unwrap();
     if let Some(frame) = bridge.frame.take() {
         scene.frame = Some(frame);
@@ -214,6 +330,7 @@ fn receive(
         commands.entity(e).despawn();
     }
     clear.0 = color(&map.skybox);
+    effects.last_event = 0;
     // Cache a small shared mesh palette for every map rebuild.
     let cube = meshes.add(Cuboid::new(1., 1., 1.));
     let sphere = meshes.add(Sphere::new(0.5));
@@ -231,13 +348,117 @@ fn receive(
         };
         let material = materials.add(StandardMaterial {
             base_color: tint,
-            perceptual_roughness: 0.9,
+            perceptual_roughness: 0.65,
+            metallic: if o.kind.solid() { 0.35 } else { 0. },
+            emissive: if o.kind.solid() {
+                LinearRgba::BLACK
+            } else {
+                LinearRgba::from(tint) * 2.
+            },
             unlit: !o.kind.solid(),
             ..default()
         });
         let base = Vec3::from_array(o.position.to_array());
         let scale = Vec3::from_array(o.scale.to_array());
         let rotation = Quat::from_rotation_y(o.rotation);
+        if o.kind == Primitive::Light {
+            commands.spawn((
+                PointLight {
+                    color: tint,
+                    intensity: 9000.,
+                    range: 13.,
+                    shadows_enabled: false,
+                    ..default()
+                },
+                Transform::from_translation(base),
+                Geometry {
+                    id: o.id.clone(),
+                    kind: o.kind,
+                },
+            ));
+        }
+        if let Some(asset) = &o.properties.asset {
+            let bounds = match asset.as_str() {
+                "container" => Vec3::new(0.575, 0.6, 0.575),
+                "container-wide" => Vec3::new(0.6, 0.7, 0.6),
+                "container-tall" => Vec3::new(0.6, 0.9, 0.6),
+                "computer" => Vec3::new(0.4, 0.661, 0.438),
+                "computer-wide" => Vec3::new(0.8, 0.497, 0.534),
+                "pipe" => Vec3::new(0.246, 0.5, 0.285),
+                "pipe-bend" => Vec3::new(0.5, 0.5, 0.285),
+                _ => Vec3::new(0.85, 0.125, 0.85),
+            };
+            commands.spawn((
+                SceneRoot(assets.load(format!("assets/models/station/{asset}.glb#Scene0"))),
+                Transform {
+                    translation: base - Vec3::Y * scale.y * 0.5,
+                    rotation,
+                    scale: scale / bounds,
+                },
+                Geometry {
+                    id: o.id.clone(),
+                    kind: o.kind,
+                },
+            ));
+            continue;
+        }
+        // Team trims turn primitive construction into readable industrial architecture.
+        if matches!(
+            o.kind,
+            Primitive::Platform | Primitive::Bridge | Primitive::Barrier | Primitive::Arch
+        ) {
+            let trim = materials.add(StandardMaterial {
+                base_color: Color::srgb(0.16, 0.48, 0.53),
+                emissive: LinearRgba::new(0.05, 0.5, 0.6, 1.) * 1.5,
+                ..default()
+            });
+            for z in [-scale.z * 0.5 + 0.05, scale.z * 0.5 - 0.05] {
+                commands.spawn((
+                    Mesh3d(cube.clone()),
+                    MeshMaterial3d(trim.clone()),
+                    Transform {
+                        translation: base + rotation * Vec3::new(0., scale.y * 0.5 + 0.02, z),
+                        rotation,
+                        scale: Vec3::new(scale.x, 0.04, 0.08),
+                    },
+                    Geometry {
+                        id: o.id.clone(),
+                        kind: o.kind,
+                    },
+                ));
+            }
+        }
+        if o.kind == Primitive::Floor {
+            let line = materials.add(StandardMaterial {
+                base_color: Color::srgb(0.12, 0.2, 0.25),
+                perceptual_roughness: 0.8,
+                ..default()
+            });
+            for axis in [0, 2] {
+                for i in -16..=16 {
+                    let mut offset = Vec3::Y * (scale.y * 0.5 + 0.002);
+                    offset[axis] = i as f32 * 4.;
+                    if offset[axis].abs() > scale[axis] * 0.5 {
+                        continue;
+                    }
+                    let mut size = Vec3::new(scale.x, 0.008, scale.z);
+                    size[axis] = 0.025;
+                    commands.spawn((
+                        Mesh3d(cube.clone()),
+                        MeshMaterial3d(line.clone()),
+                        Transform {
+                            translation: base + rotation * offset,
+                            rotation,
+                            scale: size,
+                        },
+                        Geometry {
+                            id: o.id.clone(),
+                            kind: o.kind,
+                        },
+                    ));
+                }
+            }
+        }
         let mut spawn = |mesh: Handle<Mesh>, offset: Vec3, size: Vec3| {
             commands.spawn((
                 Mesh3d(mesh),
@@ -314,7 +535,32 @@ fn receive(
             Primitive::WeaponSpawn
             | Primitive::AmmoPickup
             | Primitive::HealthPickup
-            | Primitive::ShieldPickup => spawn(sphere.clone(), Vec3::ZERO, Vec3::splat(0.65)),
+            | Primitive::ShieldPickup => {
+                if o.kind == Primitive::WeaponSpawn {
+                    commands.spawn((
+                        SceneRoot(assets.load(weapon_path(o.properties.weapon))),
+                        Transform::from_translation(base)
+                            .with_rotation(Quat::from_rotation_y(0.5))
+                            .with_scale(Vec3::splat(0.65)),
+                        Geometry {
+                            id: o.id.clone(),
+                            kind: o.kind,
+                        },
+                    ));
+                } else {
+                    spawn(cube.clone(), Vec3::ZERO, Vec3::splat(0.55));
+                }
+                commands.spawn((
+                    Mesh3d(cylinder.clone()),
+                    MeshMaterial3d(material.clone()),
+                    Transform::from_translation(base - Vec3::Y * 0.45)
+                        .with_scale(Vec3::new(1.2, 0.08, 1.2)),
+                    Geometry {
+                        id: o.id.clone(),
+                        kind: o.kind,
+                    },
+                ));
+            }
             _ => spawn(
                 cube.clone(),
                 Vec3::new(0., -scale.y * 0.5 + 0.06, 0.),
@@ -329,6 +575,7 @@ fn render_players(
     palette: Res<Palette>,
     mut pills: Query<(Entity, &Pill, &mut Transform, &mut Visibility)>,
     dynamic: Query<Entity, With<Dynamic>>,
+    assets: Res<AssetServer>,
 ) {
     let Some(frame) = &scene.frame else {
         return;
@@ -337,11 +584,15 @@ fn render_players(
         for (e, _, _, _) in &mut pills {
             commands.entity(e).despawn();
         }
+        for e in &dynamic {
+            commands.entity(e).despawn();
+        }
         return;
     };
     for (entity, pill, mut transform, mut visibility) in &mut pills {
         if let Some(p) = state.players.iter().find(|p| p.id == pill.0) {
             transform.translation = Vec3::from_array(p.position.to_array()) + Vec3::Y * 0.9;
+            transform.rotation = Quat::from_rotation_y(-p.yaw);
             *visibility = if p.alive && p.id != frame.local_id {
                 Visibility::Visible
             } else {
@@ -353,23 +604,45 @@ fn render_players(
     }
     for p in &state.players {
         if !pills.iter().any(|(_, tag, _, _)| tag.0 == p.id) {
-            commands.spawn((
-                Mesh3d(palette.pill.clone()),
-                MeshMaterial3d(if p.team == 0 {
-                    palette.blue.clone()
-                } else {
-                    palette.orange.clone()
-                }),
-                Transform::from_translation(
-                    Vec3::from_array(p.position.to_array()) + Vec3::Y * 0.9,
-                ),
-                if p.alive && p.id != frame.local_id {
-                    Visibility::Visible
-                } else {
-                    Visibility::Hidden
-                },
-                Pill(p.id.clone()),
-            ));
+            let body = commands
+                .spawn((
+                    Mesh3d(palette.pill.clone()),
+                    MeshMaterial3d(if p.team == 0 {
+                        palette.blue.clone()
+                    } else {
+                        palette.orange.clone()
+                    }),
+                    Transform::from_translation(
+                        Vec3::from_array(p.position.to_array()) + Vec3::Y * 0.9,
+                    ),
+                    if p.alive && p.id != frame.local_id {
+                        Visibility::Visible
+                    } else {
+                        Visibility::Hidden
+                    },
+                    Pill(p.id.clone()),
+                ))
+                .id();
+            let visor = commands
+                .spawn((
+                    Mesh3d(palette.rocket.clone()),
+                    MeshMaterial3d(palette.glow.clone()),
+                    Transform::from_xyz(0., 0.45, -0.34).with_scale(Vec3::new(1.9, 0.65, 0.55)),
+                ))
+                .id();
+            let gun = commands
+                .spawn((
+                    SceneRoot(assets.load(weapon_path(p.weapon))),
+                    RemoteWeapon {
+                        id: p.id.clone(),
+                        weapon: p.weapon,
+                    },
+                    Transform::from_xyz(0.42, -0.08, -0.3)
+                        .with_scale(Vec3::splat(0.55))
+                        .with_rotation(Quat::IDENTITY),
+                ))
+                .id();
+            commands.entity(body).add_children(&[visor, gun]);
         }
     }
     for e in &dynamic {
@@ -397,13 +670,23 @@ fn render_players(
         ));
     }
 }
-fn render_camera(scene: Res<Scene>, mut camera: Query<&mut Transform, With<ViewCamera>>) {
+fn render_camera(
+    scene: Res<Scene>,
+    mut camera: Query<(&mut Transform, &mut Projection), With<ViewCamera>>,
+) {
     let Some(frame) = &scene.frame else {
         return;
     };
-    let Ok(mut camera) = camera.single_mut() else {
+    let Ok((mut camera, mut projection)) = camera.single_mut() else {
         return;
     };
+    if let Projection::Perspective(p) = &mut *projection {
+        p.fov = if frame.ads {
+            50_f32.to_radians()
+        } else {
+            85_f32.to_radians()
+        };
+    }
     if let Some(position) = frame.camera {
         *camera = Transform::from_translation(Vec3::from_array(position)).looking_at(
             Vec3::from_array(frame.target.unwrap_or([0., 0., 0.])),
@@ -438,5 +721,276 @@ fn render_pickups(scene: Res<Scene>, mut geometry: Query<(&Geometry, &mut Visibi
         } else {
             Visibility::Visible
         };
+    }
+}
+
+fn weapon_path(w: Weapon) -> String {
+    let model = match w {
+        Weapon::Pistol => "i",
+        Weapon::Rifle => "a",
+        Weapon::Precision => "p",
+        Weapon::Shotgun => "m",
+        Weapon::Sniper => "f",
+        Weapon::Rocket => "e",
+    };
+    format!("assets/models/weapons/blaster-{model}.glb#Scene0")
+}
+fn render_weapon(
+    mut commands: Commands,
+    scene: Res<Scene>,
+    assets: Res<AssetServer>,
+    time: Res<Time>,
+    mut guns: Query<(Entity, &HeldWeapon, &mut Transform, &mut Visibility)>,
+) {
+    let player = scene.frame.as_ref().and_then(|f| f.predicted.as_ref());
+    let visible =
+        player.is_some_and(|p| p.alive) && scene.frame.as_ref().is_some_and(|f| f.camera.is_none());
+    let Some(p) = player else {
+        for (_, _, _, mut v) in &mut guns {
+            *v = Visibility::Hidden;
+        }
+        return;
+    };
+    let frame = scene.frame.as_ref().unwrap();
+    let bob = if p.grounded {
+        p.velocity.length().min(8.) * 0.0015
+    } else {
+        0.
+    };
+    let t = time.elapsed_secs();
+    let reload = if p.reload_at > 0 { 0.65 } else { 0. };
+    let recoil = frame.recoil;
+    let transform = Transform::from_xyz(
+        if frame.ads { 0.05 } else { 0.26 } + bob * (t * 10.).cos(),
+        -0.22 - reload * 0.15 + bob * (t * 20.).sin(),
+        (if p.weapon == Weapon::Rocket {
+            -1.05
+        } else {
+            -0.6
+        }) + recoil * 0.09,
+    )
+    .with_rotation(Quat::from_euler(
+        EulerRot::XYZ,
+        reload - recoil * 0.13,
+        0.,
+        0.,
+    ))
+    .with_scale(Vec3::splat(0.62));
+    let mut exists = false;
+    for (e, g, mut tr, mut v) in &mut guns {
+        if g.0 != p.weapon {
+            commands.entity(e).despawn();
+        } else {
+            exists = true;
+            *tr = transform;
+            *v = if visible {
+                Visibility::Visible
+            } else {
+                Visibility::Hidden
+            };
+        }
+    }
+    if !exists {
+        commands.spawn((
+            SceneRoot(assets.load(weapon_path(p.weapon))),
+            transform,
+            if visible {
+                Visibility::Visible
+            } else {
+                Visibility::Hidden
+            },
+            HeldWeapon(p.weapon),
+            RenderLayers::layer(1),
+            NotShadowCaster,
+        ));
+    }
+}
+fn weapon_layers(
+    mut commands: Commands,
+    meshes: Query<Entity, (With<Mesh3d>, Without<RenderLayers>)>,
+    parents: Query<&ChildOf>,
+    guns: Query<(), With<HeldWeapon>>,
+) {
+    for e in &meshes {
+        let mut current = e;
+        for _ in 0..12 {
+            if guns.contains(current) {
+                commands
+                    .entity(e)
+                    .insert((RenderLayers::layer(1), NotShadowCaster));
+                break;
+            }
+            let Ok(parent) = parents.get(current) else {
+                break;
+            };
+            current = parent.parent();
+        }
+    }
+}
+fn combat_effects(
+    mut commands: Commands,
+    scene: Res<Scene>,
+    mut effects: ResMut<Effects>,
+    time: Res<Time>,
+    palette: Res<Palette>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut flashes: Query<(Entity, &mut Flash, &mut Transform)>,
+) {
+    for (e, mut f, mut t) in &mut flashes {
+        f.0 -= time.delta_secs();
+        if f.0 <= 0. {
+            commands.entity(e).despawn();
+        } else {
+            t.scale *= 0.92;
+        }
+    }
+    let Some(state) = scene.frame.as_ref().and_then(|f| f.state.as_ref()) else {
+        return;
+    };
+    for event in &state.events {
+        if event.id <= effects.last_event {
+            continue;
+        }
+        effects.last_event = event.id;
+        if let Some(pos) = event.position {
+            let pos = Vec3::from_array(pos.to_array());
+            if event.kind == "shot" {
+                let Some(p) = state
+                    .players
+                    .iter()
+                    .find(|p| Some(&p.id) == event.actor.as_ref())
+                else {
+                    continue;
+                };
+                let aim = Vec3::new(
+                    p.yaw.sin() * p.pitch.cos(),
+                    p.pitch.sin(),
+                    -p.yaw.cos() * p.pitch.cos(),
+                );
+                let aim = event
+                    .endpoint
+                    .map(|end| (Vec3::from_array(end.to_array()) - pos).normalize_or_zero())
+                    .unwrap_or(aim);
+                let len = if event.weapon == Some(Weapon::Rocket) {
+                    1.5
+                } else {
+                    event
+                        .endpoint
+                        .map(|end| Vec3::from_array(end.to_array()).distance(pos))
+                        .unwrap_or(12.)
+                };
+                commands.spawn((
+                    Mesh3d(meshes.add(Cuboid::new(0.025, 0.025, len))),
+                    MeshMaterial3d(palette.glow.clone()),
+                    Transform::from_translation(pos + aim * len * 0.5).looking_to(aim, Vec3::Y),
+                    Flash(0.085),
+                ));
+            }
+            if event.kind == "explosion" {
+                commands.spawn((
+                    Mesh3d(palette.rocket.clone()),
+                    MeshMaterial3d(palette.glow.clone()),
+                    Transform::from_translation(pos).with_scale(Vec3::splat(14.)),
+                    Flash(0.28),
+                ));
+            }
+        }
+    }
+}
+
+fn remote_weapons(
+    scene: Res<Scene>,
+    assets: Res<AssetServer>,
+    mut weapons: Query<(&mut RemoteWeapon, &mut SceneRoot)>,
+) {
+    let Some(state) = scene.frame.as_ref().and_then(|f| f.state.as_ref()) else {
+        return;
+    };
+    for (mut tag, mut root) in &mut weapons {
+        if let Some(p) = state.players.iter().find(|p| p.id == tag.id)
+            && tag.weapon != p.weapon
+        {
+            tag.weapon = p.weapon;
+            root.0 = assets.load(weapon_path(p.weapon));
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Resource)]
+struct Capture {
+    path: String,
+    image: Option<Handle<Image>>,
+    frames: u32,
+}
+/// Render the actual client scene to a GPU image, without opening a window.
+/// Used to verify asset loading, shadows, guns and scene registration in CI/local.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn capture(path: &str) {
+    let mut app = build_app(true);
+    app.insert_resource(Capture {
+        path: path.into(),
+        image: None,
+        frames: 0,
+    })
+    .add_plugins(bevy::app::ScheduleRunnerPlugin::run_loop(
+        std::time::Duration::from_secs_f64(1. / 60.),
+    ))
+    .add_systems(Startup, capture_target.after(setup))
+    .add_systems(Update, capture_frame)
+    .run();
+}
+#[cfg(not(target_arch = "wasm32"))]
+fn capture_target(
+    mut commands: Commands,
+    mut images: ResMut<Assets<Image>>,
+    mut capture: ResMut<Capture>,
+    cameras: Query<Entity, With<Camera3d>>,
+) {
+    let mut image = Image::new_target_texture(
+        1280,
+        720,
+        bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
+        None,
+    );
+    image.texture_descriptor.usage |= bevy::render::render_resource::TextureUsages::COPY_SRC;
+    let handle = images.add(image);
+    for camera in &cameras {
+        commands
+            .entity(camera)
+            .insert(bevy::camera::RenderTarget::Image(handle.clone().into()));
+    }
+    capture.image = Some(handle);
+}
+#[cfg(not(target_arch = "wasm32"))]
+fn capture_frame(
+    mut commands: Commands,
+    mut capture: ResMut<Capture>,
+    assets: Res<AssetServer>,
+    mut exit: MessageWriter<AppExit>,
+    scenes: Query<&SceneRoot>,
+) {
+    capture.frames += 1;
+    if capture.frames >= 120
+        && capture.image.is_some()
+        && scenes
+            .iter()
+            .all(|root| assets.is_loaded_with_dependencies(&root.0))
+    {
+        let handle = capture.image.take().unwrap();
+        commands
+            .spawn(bevy::render::view::screenshot::Screenshot::image(handle))
+            .observe(bevy::render::view::screenshot::save_to_disk(
+                capture.path.clone(),
+            ));
+    }
+    if capture.frames >= 150
+        && capture.image.is_none()
+        && std::path::Path::new(&capture.path).exists()
+    {
+        exit.write(AppExit::Success);
+    }
+    if capture.frames > 600 {
+        panic!("GPU capture did not finish or assets failed to load");
     }
 }

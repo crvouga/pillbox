@@ -84,6 +84,7 @@ struct Room {
     persisted: bool,
     persisting: bool,
     touched: Instant,
+    bots: BTreeMap<String, BotBrain>,
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -93,6 +94,8 @@ struct ServerConfig {
     max_players: usize,
     map_version: Uuid,
     mode_version: Uuid,
+    #[serde(default)]
+    practice_bots: usize,
 }
 #[derive(Clone)]
 struct ResultJob {
@@ -176,6 +179,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
  .route("/api/servers/{id}/start",post(start)).route("/api/servers/{id}/finish",post(finish))
  .route("/api/servers/{id}/ws",get(upgrade)).route("/api/results/{id}",get(result))
  .fallback_service(ServeDir::new(assets)).layer(DefaultBodyLimit::max(512*1024))
+ .layer(SetResponseHeaderLayer::if_not_present(header::CACHE_CONTROL,header::HeaderValue::from_static("no-cache")))
  .layer(SetResponseHeaderLayer::if_not_present(header::X_CONTENT_TYPE_OPTIONS,header::HeaderValue::from_static("nosniff")))
  .layer(SetResponseHeaderLayer::if_not_present(header::REFERRER_POLICY,header::HeaderValue::from_static("same-origin")))
  .layer(SetResponseHeaderLayer::if_not_present(header::CONTENT_SECURITY_POLICY,header::HeaderValue::from_static("default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; connect-src 'self'; img-src 'self' data:; worker-src 'self' blob:; frame-ancestors 'none'")))
@@ -290,7 +294,7 @@ async fn me(State(s): State<AppState>, h: HeaderMap) -> ApiResult<Json<User>> {
 }
 async fn templates() -> Json<Value> {
     Json(
-        json!({"map":starter_map(),"modes":[Mode::builtin("Free For All",Objective::None,false),Mode::builtin("Team Deathmatch",Objective::None,true),Mode::builtin("Capture the Flag",Objective::Flags,true),Mode::builtin("King of the Hill",Objective::Hill,true)]}),
+        json!({"map":starter_map(),"maps":arena_maps(),"modes":[Mode::builtin("Free For All",Objective::None,false),Mode::builtin("Team Deathmatch",Objective::None,true),Mode::builtin("Capture the Flag",Objective::Flags,true),Mode::builtin("King of the Hill",Objective::Hill,true)]}),
     )
 }
 async fn list_content(
@@ -346,6 +350,8 @@ async fn publish_content(
 }
 fn validate_config(c: &ServerConfig) -> ApiResult<()> {
     if !valid_name(&c.name)
+        || c.practice_bots > 4
+        || c.practice_bots >= c.max_players
         || !(2..=16).contains(&c.max_players)
         || !matches!(c.visibility.as_str(), "public" | "unlisted")
     {
@@ -373,7 +379,7 @@ async fn create_server(
 ) -> ApiResult<Json<RoomView>> {
     let u = auth(&s, &h).await?;
     rate(&s, format!("create:{}", u.id), 10).await?;
-    let world = load_world(&s, &c, u.id).await?;
+    let mut world = load_world(&s, &c, u.id).await?;
     let mut rooms = s.rooms.lock().await;
     if rooms.len() >= 64 || rooms.values().filter(|r| r.owner == u.id).count() >= 4 {
         return Err(ApiError::bad(
@@ -382,7 +388,19 @@ async fn create_server(
     }
     let id = Uuid::new_v4();
     let (tx, _) = broadcast::channel(4);
+    let mut bots = BTreeMap::new();
+    for i in 0..c.practice_bots {
+        let id = format!("bot:{i}");
+        world
+            .join(
+                id.clone(),
+                format!("{} · BOT", ["VECTOR", "NOVA", "FLUX", "ECHO"][i]),
+            )
+            .map_err(ApiError::bad)?;
+        bots.insert(id, BotBrain::default());
+    }
     let r = Room {
+        bots,
         config: c,
         owner: u.id,
         world,
@@ -421,6 +439,19 @@ async fn configure_server(
             "Wait for results to save and all players to leave before reconfiguring",
         ));
     }
+    let mut world = world;
+    let mut bots = BTreeMap::new();
+    for i in 0..c.practice_bots {
+        let id = format!("bot:{i}");
+        world
+            .join(
+                id.clone(),
+                format!("{} · BOT", ["VECTOR", "NOVA", "FLUX", "ECHO"][i]),
+            )
+            .map_err(ApiError::bad)?;
+        bots.insert(id, BotBrain::default());
+    }
+    r.bots = bots;
     r.config = c;
     r.world = world;
     r.touched = Instant::now();
@@ -589,11 +620,12 @@ async fn tick_loop(s: AppState) {
             if closing && matches!(r.world.phase, Phase::Starting | Phase::Playing) {
                 r.world.finish();
             }
-            let inputs = r
+            let mut inputs: BTreeMap<String, Input> = r
                 .inputs
                 .iter_mut()
                 .filter_map(|(id, q)| q.pop_front().map(|i| (id.clone(), i)))
                 .collect();
+            inputs.extend(r.world.bot_inputs(&mut r.bots));
             r.world.step(&inputs);
             if r.world.phase == Phase::Finished && !r.persisting && !r.persisted {
                 let mut players: Vec<_> = r.world.players.values().cloned().collect();

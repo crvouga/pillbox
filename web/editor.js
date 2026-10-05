@@ -28,6 +28,7 @@ export const primitives = [
   "flag_base",
   "scoring_zone",
   "hill",
+  "light",
 ];
 export const weapons = [
   "pistol",
@@ -78,6 +79,8 @@ export class Editor {
       "sz",
       "rotation",
       "object-color",
+      "object-label",
+      "object-asset",
       "object-team",
       "object-weapon",
       "object-target",
@@ -232,6 +235,8 @@ export class Editor {
     ["sx", "sy", "sz"].forEach((k, i) => ($(k).value = o.scale[i]));
     $("rotation").value = Math.round((o.rotation * 180) / Math.PI);
     $("object-color").value = o.properties.color;
+    $("object-label").value = o.properties.label || "";
+    $("object-asset").value = o.properties.asset || "";
     $("object-team").value = o.properties.team ?? "";
     $("object-weapon").value = o.properties.weapon;
     $("object-target").value = o.properties.target ?? "";
@@ -251,6 +256,8 @@ export class Editor {
       strength: +$("object-strength").value,
       respawn_seconds: +$("object-respawn").value,
       color: $("object-color").value,
+      label: $("object-label").value,
+      asset: $("object-asset").value || null,
     };
     this.changed();
   }

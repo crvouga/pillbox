@@ -1,5 +1,52 @@
 # Verification record
 
+## Current overhaul evidence — 2026-10-05
+
+The records below this section describe the earlier MVP. Current playability work
+is described in [overhaul](overhaul.md); deployment is excluded.
+
+- All 31 core integration tests, full native workspace tests, formatting and
+  Clippy with warnings denied passed. New tests verify actual controller climbs
+  to all three levels on every arena, Box3D rotated-wall sweeps, stairs, spawn
+  support, navigation to power weapons and 6,000 ticks of bot combat.
+- Dense but valid stacked geometry is checked against a bounded bot graph so
+  creator content cannot grow navigation work without limit.
+- Both release WASM backends and bindgen output passed. JS syntax/format checks
+  passed; npm audit reported zero vulnerabilities.
+- All three HTTP/WebSocket tests passed against the new local service and the
+  Linux container, including authoritative practice bot combat, capacity, input
+  rejection, respawns and durable scores.
+- Atlas applied `db/schema.sql` to a fresh disposable PostgreSQL 17 database and
+  reported `Schemas are synced, no changes to be made.` No schema change or
+  migration artifact was introduced by the overhaul.
+- The Linux amd64 image `pillbox:overhaul` passed models/textures/audio, both WASM
+  assets, alternate PORT, network acceptance and active-match SIGTERM/restart
+  recovery. Final recovered shutdown result: `f06729ca-5853-40bd-b2b6-3ad15a0ebace`.
+  Image ID reported locally:
+  `sha256:3403fe807cd858452d84e32b9eac56553858d33cc9937033979497ec07242253`.
+- Native Metal GPU captures loaded every glTF scene/dependency and rendered all
+  six first-person weapons and all three arena variants through the actual
+  client systems. This found and corrected missing scene reflection registration
+  and backward weapon orientation. Captures are session-local evidence, not a
+  browser FPS measurement.
+- The real browser initialized WebGPU, displayed station/weapon models, object
+  labels and HUD, joined/started practice, decoded atmosphere/action/announcer
+  audio without failures, and displayed bot kills and saved standings. Keyboard
+  movement, rifle switching and firing were observed with changed position and
+  consumed ammunition through the actual browser client. The tab
+  intermittently suspended animation while hidden, so sustained manual aim/play
+  and FPS are not claimed.
+- Updated release CPU probe: 16 players / 3,600 ticks on the larger Box3D arena
+  took 0.72 s, 0.201 ms/tick, 83.0× realtime. This is not a GPU or fleet benchmark.
+- ElevenLabs rejected both selectively read Vault keys with HTTP 401
+  `invalid_api_key`; a direct TTS generation request with the dev key also
+  returned HTTP 401. No generated ElevenLabs audio is claimed. Licensed CC0
+  recordings provide the fallback, and the offline generator is ready.
+
+Evidence for this run is in `/Users/chrisvouga/.cache/pillbox-overhaul-641a/`.
+
+## Earlier MVP evidence
+
 Local unattended implementation, 2026-10-05. Evidence is kept outside tracked files in `/Users/chrisvouga/.cache/pillbox-overnight-641a/` for this session; portable checks live in this repository.
 
 ## Observed passing checks
@@ -51,18 +98,18 @@ Local unattended implementation, 2026-10-05. Evidence is kept outside tracked fi
 
 ## Definition-of-done audit
 
-| Brief criteria | Implemented path and observed evidence |
-| --- | --- |
-| 1: open browser | Real WebGPU renderer initialized; visible screenshot shows the arena and browser shell. |
-| 2–5: create/configure server, select map/mode | Browser host/configuration form; HTTP acceptance verifies explicit version IDs, owner-only changes and occupied-server protection. |
-| 6–8: discover, join, multiple players, leave | Public listing and unlisted invite behavior; two real WebSocket identities, duplicate rejection, replicated joins and disconnect removal. |
-| 9–10: begin, move, shoot | Waiting → starting → playing transitions; acknowledged bounded movement; two-client aimed combat. |
-| 11: arena-shooter feel | Shared predicted movement, jump/air control, six weapon classes, shields and respawns are implemented. Subjective feel and WAN latency are not established by headless tests. |
-| 12: health/shield/death/respawn/score | Core regression tests plus a real replicated kill and scored finish. |
-| 13–15: scoreboard, kill feed, announcer | Browser presentation consumes authoritative player stats and semantic events; network assertions prove kill and match-over events. Speech/pointer-lock require browser capabilities and foreground interaction. |
-| 16–17: completion, durable result | Score/time/owner completion; persisted result with explicit content versions and participant rows; result retrieved across native process restart. |
-| 18–22: browser sandbox, create/place/save/publish | Browser-created floor/spawn/box map, numeric editing, duplicate/delete, save and immutable v1 publication exercised through `sc browser`. Serialization/invalid-spawn tests cover reproducibility and validation. |
-| 23–24: create/configure/save mode | Browser mode form and declarative rules editor; custom mode published in browser and acceptance test. Unsupported executable effects rejected. |
+| Brief criteria                                                | Implemented path and observed evidence                                                                                                                                                                                                                                                         |
+| ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1: open browser                                               | Real WebGPU renderer initialized; visible screenshot shows the arena and browser shell.                                                                                                                                                                                                        |
+| 2–5: create/configure server, select map/mode                 | Browser host/configuration form; HTTP acceptance verifies explicit version IDs, owner-only changes and occupied-server protection.                                                                                                                                                             |
+| 6–8: discover, join, multiple players, leave                  | Public listing and unlisted invite behavior; two real WebSocket identities, duplicate rejection, replicated joins and disconnect removal.                                                                                                                                                      |
+| 9–10: begin, move, shoot                                      | Waiting → starting → playing transitions; acknowledged bounded movement; two-client aimed combat.                                                                                                                                                                                              |
+| 11: arena-shooter feel                                        | Shared predicted movement, jump/air control, six weapon classes, shields and respawns are implemented. Subjective feel and WAN latency are not established by headless tests.                                                                                                                  |
+| 12: health/shield/death/respawn/score                         | Core regression tests plus a real replicated kill and scored finish.                                                                                                                                                                                                                           |
+| 13–15: scoreboard, kill feed, announcer                       | Browser presentation consumes authoritative player stats and semantic events; network assertions prove kill and match-over events. Speech/pointer-lock require browser capabilities and foreground interaction.                                                                                |
+| 16–17: completion, durable result                             | Score/time/owner completion; persisted result with explicit content versions and participant rows; result retrieved across native process restart.                                                                                                                                             |
+| 18–22: browser sandbox, create/place/save/publish             | Browser-created floor/spawn/box map, numeric editing, duplicate/delete, save and immutable v1 publication exercised through `sc browser`. Serialization/invalid-spawn tests cover reproducibility and validation.                                                                              |
+| 23–24: create/configure/save mode                             | Browser mode form and declarative rules editor; custom mode published in browser and acceptance test. Unsupported executable effects rejected.                                                                                                                                                 |
 | 25–27: new server using user content, other players join/play | Browser-created map/mode used in a browser-created match that saved its result. Independently, the automated HTTP/WebSocket creator flow publishes custom content, connects two players, completes combat and checks stored results. A manual two-person pointer-lock playtest is not claimed. |
 
 The completion audit also checks CTF reset/drop/return, contested hills, weapon cooldown/ownership, invalid geometry and mode data, isolated simultaneous worlds, native and WASM compilation, fresh schema application, and renderer-free core dependencies. Source/artifact searches found no migration directories/files, infrastructure definitions, embedded private keys or token patterns, or unimplemented/TODO stubs. Local test passwords are explicitly disposable examples.

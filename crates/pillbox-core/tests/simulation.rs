@@ -1,7 +1,7 @@
 use pillbox_core::*;
 use std::collections::BTreeMap;
 fn world(objective: Objective, teams: bool) -> World {
-    World::new(starter_map(), Mode::builtin("test", objective, teams)).unwrap()
+    World::new(test_map(), Mode::builtin("test", objective, teams)).unwrap()
 }
 fn two(w: &mut World) {
     w.join("a".into(), "Alice".into()).unwrap();
@@ -17,7 +17,7 @@ fn input(w: &mut World, id: &str, mut i: Input) {
 }
 #[test]
 fn maps_roundtrip_and_validation() {
-    let m = starter_map();
+    let m = test_map();
     let json = serde_json::to_string(&m).unwrap();
     let copy: Map = serde_json::from_str(&json).unwrap();
     copy.validate().unwrap();
@@ -261,7 +261,7 @@ fn hill_contested_does_not_score() {
 }
 #[test]
 fn booster_and_teleporter() {
-    let mut map = starter_map();
+    let mut map = test_map();
     let mut p = Player::new("a".into(), "A".into(), 0, Vec3::new(-14., 0., 0.));
     move_player(&map, &mut p, Input::default(), 1);
     assert!(p.velocity.y > 10.);
@@ -309,7 +309,7 @@ fn custom_rule_and_validation() {
 }
 #[test]
 fn jump_and_ramp_collision() {
-    let mut map = starter_map();
+    let mut map = test_map();
     map.objects.push(MapObject {
         id: "ramp".into(),
         kind: Primitive::Ramp,
@@ -357,7 +357,7 @@ fn time_limit_finishes_match() {
 
 #[test]
 fn forward_follows_aim_at_ninety_degrees() {
-    let map = starter_map();
+    let map = test_map();
     let mut p = Player::new("a".into(), "A".into(), 0, Vec3::ZERO);
     for tick in 1..20 {
         move_player(
@@ -632,4 +632,358 @@ fn disconnected_rocket_owner_keeps_kill_credit_and_can_win() {
     assert_eq!(shooter.kills, 1);
     assert_eq!(shooter.score, 1);
     assert_eq!(w.phase, Phase::Finished);
+}
+
+fn test_map() -> Map {
+    let mut objects = vec![];
+    let mut add = |id: &str, kind, p, s, team, color: &str| {
+        objects.push(MapObject {
+            id: id.into(),
+            kind,
+            position: p,
+            rotation: 0.,
+            scale: s,
+            properties: Properties {
+                team,
+                color: color.into(),
+                ..Default::default()
+            },
+        })
+    };
+    add(
+        "ground",
+        Primitive::Floor,
+        Vec3::new(0., -1., 0.),
+        Vec3::new(44., 2., 44.),
+        None,
+        "#28344f",
+    );
+    for (id, x, z, sx, sz) in [
+        ("north", 0., -22., 44., 1.),
+        ("south", 0., 22., 44., 1.),
+        ("west", -22., 0., 1., 44.),
+        ("east", 22., 0., 1., 44.),
+    ] {
+        add(
+            id,
+            Primitive::Wall,
+            Vec3::new(x, 2., z),
+            Vec3::new(sx, 4., sz),
+            None,
+            "#536493",
+        );
+    }
+    for (i, x, z) in [(0, -7., -4.), (1, 7., 4.), (2, 7., -8.), (3, -7., 8.)] {
+        add(
+            &format!("cover{i}"),
+            Primitive::Box,
+            Vec3::new(x, 1.5, z),
+            Vec3::new(3., 3., 3.),
+            None,
+            "#9a79da",
+        );
+    }
+    for t in 0..2 {
+        let z = if t == 0 { -15. } else { 15. };
+        let color = if t == 0 { "#54e3f0" } else { "#ff8b72" };
+        for (i, x) in [-4., 4.].into_iter().enumerate() {
+            add(
+                &format!("spawn{t}-{i}"),
+                Primitive::TeamSpawn,
+                Vec3::new(x, 0.05, z),
+                Vec3::ONE,
+                Some(t),
+                color,
+            );
+        }
+        add(
+            &format!("base{t}"),
+            Primitive::FlagBase,
+            Vec3::new(0., 0.1, z + if t == 0 { -3. } else { 3. }),
+            Vec3::new(3., 2., 3.),
+            Some(t),
+            color,
+        );
+    }
+    add(
+        "hill",
+        Primitive::Hill,
+        Vec3::new(0., 1., 0.),
+        Vec3::new(7., 3., 7.),
+        None,
+        "#ffe599",
+    );
+    add(
+        "jump",
+        Primitive::JumpPad,
+        Vec3::new(-14., 0.15, 0.),
+        Vec3::new(3., 0.3, 3.),
+        None,
+        "#92ffb5",
+    );
+    add(
+        "rifle",
+        Primitive::WeaponSpawn,
+        Vec3::new(5., 0.5, 0.),
+        Vec3::ONE,
+        None,
+        "#ffe599",
+    );
+    Map {
+        name: "Prism Courtyard".into(),
+        skybox: "#141c35".into(),
+        objects,
+    }
+}
+
+#[test]
+fn curated_arenas_have_valid_spawns_vertical_routes_cover_and_lighting() {
+    for map in arena_maps() {
+        map.validate().unwrap();
+        assert!(map.objects.len() > 75);
+        assert!(
+            map.objects
+                .iter()
+                .filter(|o| o.kind == Primitive::Light)
+                .count()
+                >= 6
+        );
+        assert!(
+            map.objects
+                .iter()
+                .filter(|o| o.kind == Primitive::Ramp)
+                .count()
+                >= 8
+        );
+        assert!(map.objects.iter().any(|o| o.kind == Primitive::Stairs));
+        for mode in [
+            Mode::builtin("FFA", Objective::None, false),
+            Mode::builtin("CTF", Objective::Flags, true),
+            Mode::builtin("Hill", Objective::Hill, true),
+        ] {
+            map.compatible(&mode).unwrap();
+        }
+        let physics = PhysicsMap::new(&map);
+        for spawn in map.objects.iter().filter(|o| o.kind.spawn()) {
+            let mut p = Player::new("route".into(), "Route".into(), 0, spawn.position);
+            for tick in 0..120 {
+                move_player_with_physics(&map, &physics, &mut p, Input::default(), tick);
+            }
+            assert!(
+                (p.position.y - 3.).abs() < 0.02,
+                "{} spawn {} not supported {:?}",
+                map.name,
+                spawn.id,
+                p.position
+            );
+            assert!(p.grounded);
+        }
+    }
+}
+#[test]
+fn box3d_capsule_slides_on_rotated_walls_and_cannot_tunnel() {
+    let mut map = test_map();
+    map.objects.retain(|o| o.kind == Primitive::Floor);
+    map.objects.push(MapObject {
+        id: "thin diagonal".into(),
+        kind: Primitive::Wall,
+        position: Vec3::new(0., 2., 0.),
+        rotation: 0.6,
+        scale: Vec3::new(0.1, 4., 100.),
+        properties: Properties::default(),
+    });
+    let physics = PhysicsMap::new(&map);
+    let mut p = Player::new("a".into(), "A".into(), 0, Vec3::new(-5., 0., 0.));
+    for tick in 0..180 {
+        move_player_with_physics(
+            &map,
+            &physics,
+            &mut p,
+            Input {
+                x: 1.,
+                z: 0.4,
+                ..Default::default()
+            },
+            tick,
+        );
+        assert!(physics.clear(p.position));
+        let normal_x = 0.6_f32.cos() * p.position.x - 0.6_f32.sin() * p.position.z;
+        assert!(normal_x < 0., "crossed wall");
+    }
+    assert!(p.position.x < 10.);
+    assert!(p.position.z.abs() > 4., "must slide along the wall");
+}
+#[test]
+fn box3d_climbs_steps_and_follows_downhill_without_falling_through() {
+    let mut map = test_map();
+    map.objects.retain(|o| o.kind == Primitive::Floor);
+    map.objects.push(MapObject {
+        id: "steps".into(),
+        kind: Primitive::Stairs,
+        position: Vec3::new(0., 1., 0.),
+        rotation: 0.,
+        scale: Vec3::new(4., 2., 8.),
+        properties: Properties::default(),
+    });
+    let physics = PhysicsMap::new(&map);
+    let mut p = Player::new("a".into(), "A".into(), 0, Vec3::new(0., 0., -5.));
+    let mut max_y = 0_f32;
+    for tick in 0..120 {
+        move_player_with_physics(
+            &map,
+            &physics,
+            &mut p,
+            Input {
+                z: 1.,
+                ..Default::default()
+            },
+            tick,
+        );
+        max_y = max_y.max(p.position.y);
+    }
+    assert!(max_y > 1.8, "stairs blocked at {:?}", p.position);
+    for tick in 120..240 {
+        move_player_with_physics(
+            &map,
+            &physics,
+            &mut p,
+            Input {
+                z: -1.,
+                ..Default::default()
+            },
+            tick,
+        );
+    }
+    assert!(p.position.y.abs() < 0.02);
+    assert!(p.grounded);
+}
+#[test]
+fn players_can_walk_curated_ramps_and_stairs_to_all_three_levels() {
+    for (variant, map) in arena_maps().into_iter().enumerate() {
+        let physics = PhysicsMap::new(&map);
+        let angle = variant as f32 * std::f32::consts::FRAC_PI_2;
+        let (s, c) = angle.sin_cos();
+        let rotate = |v: Vec3| Vec3::new(c * v.x + s * v.z, v.y, -s * v.x + c * v.z);
+        for (route, start, end) in [
+            ("base", Vec3::new(8., 0.05, -9.), Vec3::new(8., 3., -25.)),
+            ("reactor", Vec3::new(0., 0.05, -17.), Vec3::new(0., 3., -4.)),
+            (
+                "skywalk",
+                Vec3::new(29., 0.05, -7.),
+                Vec3::new(29., 6., -25.),
+            ),
+            (
+                "overlook stairs",
+                Vec3::new(10., 3.05, -8.),
+                Vec3::new(10., 6., 7.),
+            ),
+        ] {
+            let start = rotate(start);
+            let end = rotate(end);
+            let mut player = Player::new("climber".into(), "Climber".into(), 0, start);
+            for tick in 0..240 {
+                let delta = end - player.position;
+                if Vec3::new(delta.x, 0., delta.z).length() < 0.2 {
+                    break;
+                }
+                let direction = Vec3::new(delta.x, 0., delta.z).normalize();
+                move_player_with_physics(
+                    &map,
+                    &physics,
+                    &mut player,
+                    Input {
+                        x: direction.x,
+                        z: direction.z,
+                        ..Default::default()
+                    },
+                    tick,
+                );
+            }
+            assert!(
+                player.position.distance(end) < 0.3,
+                "{} {route} blocked at {:?}, expected {end:?}; grounded {} velocity {:?}",
+                map.name,
+                player.position,
+                player.grounded,
+                player.velocity
+            );
+            assert!(player.grounded, "{} {route} unsupported", map.name);
+        }
+    }
+}
+#[test]
+fn opponents_can_route_between_bases_and_reach_every_power_weapon() {
+    for map in arena_maps() {
+        let w = World::new(map.clone(), Mode::builtin("nav", Objective::None, false)).unwrap();
+        let start = map
+            .objects
+            .iter()
+            .find(|o| o.id == "spawn0-0")
+            .unwrap()
+            .position;
+        for o in map
+            .objects
+            .iter()
+            .filter(|o| o.kind == Primitive::WeaponSpawn || o.id == "spawn1-0")
+        {
+            assert!(
+                !w.navigation.route(start, o.position).is_empty(),
+                "{} unreachable {} {:?}",
+                map.name,
+                o.id,
+                o.position
+            );
+        }
+    }
+}
+#[test]
+fn dense_valid_creator_geometry_cannot_build_an_unbounded_bot_graph() {
+    let mut map = test_map();
+    map.objects
+        .retain(|o| o.kind == Primitive::Floor || o.kind.spawn());
+    for level in 1..50 {
+        map.objects.push(MapObject {
+            id: format!("stack-{level}"),
+            kind: Primitive::Platform,
+            position: Vec3::new(0., level as f32 * 3., 0.),
+            rotation: 0.,
+            scale: Vec3::new(64., 0.5, 64.),
+            properties: Properties::default(),
+        });
+    }
+    map.validate().unwrap();
+    let navigation = Navigation::new(&map, &PhysicsMap::new(&map));
+    assert!(!navigation.nodes.is_empty());
+    assert!(navigation.nodes.len() <= 2048);
+}
+#[test]
+fn practice_opponents_move_fire_reload_and_score_through_authoritative_rules() {
+    let mut w = World::new(
+        starter_map(),
+        Mode::builtin("practice", Objective::None, false),
+    )
+    .unwrap();
+    let mut brains = BTreeMap::new();
+    for i in 0..4 {
+        let id = format!("bot:{i}");
+        w.join(id.clone(), format!("Bot {i}")).unwrap();
+        brains.insert(id, BotBrain::default());
+    }
+    w.start().unwrap();
+    let mut shots = 0;
+    let mut kills = 0;
+    for _ in 0..6000 {
+        let inputs = w.bot_inputs(&mut brains);
+        w.step(&inputs);
+        for e in w.events.iter().filter(|e| e.tick == w.tick) {
+            shots += usize::from(e.kind == "shot");
+            kills += usize::from(e.kind == "player_killed");
+        }
+    }
+    assert!(shots > 40, "bots failed to engage: {shots}");
+    assert!(kills > 2, "bots failed to complete combat: {kills}");
+    for p in w.players.values() {
+        assert!(p.position.is_finite());
+        assert!(p.position.y > -2., "bot fell out {:?}", p.position);
+    }
 }

@@ -3,8 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test tests/network.test.js",
-    "check": "node --check web/app.js && node --check web/editor.js && prettier --check \"web/*.{js,css,html}\" \"tests/*.js\" \".github/workflows/*.yml\" package.json"
+    "test": "node --test tests/network.test.js tests/practice.test.js",
+    "check": "node --check web/app.js && node --check web/editor.js && node --check web/audio.js && node --check web/hud.js && prettier --check \"web/*.{js,css,html}\" \"tests/*.js\" \".github/workflows/*.yml\" package.json"
   },
   "devDependencies": {
     "prettier": "3.9.9",

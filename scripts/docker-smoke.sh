@@ -22,6 +22,11 @@ curl -fsS http://127.0.0.1:18081/health
 curl -fsS http://127.0.0.1:18081/ | rg 'PILLBOX' >/dev/null
 curl -fsS http://127.0.0.1:18081/pkg/webgpu/pillbox_client_bg.wasm -o /dev/null
 curl -fsS http://127.0.0.1:18081/pkg/webgl/pillbox_client_bg.wasm -o /dev/null
+curl -fsS http://127.0.0.1:18081/assets/models/weapons/blaster-e.glb -o /dev/null
+curl -fsS http://127.0.0.1:18081/assets/models/station/container.glb -o /dev/null
+curl -fsS http://127.0.0.1:18081/assets/models/station/Textures/colormap.png -o /dev/null
+curl -fsS http://127.0.0.1:18081/assets/audio/laserSmall_001.m4a -o /dev/null
+curl -fsS http://127.0.0.1:18081/assets/audio/voice/fight.m4a -o /dev/null
 TEST_URL=http://127.0.0.1:18081 npm test
 TEST_URL=http://127.0.0.1:18081 SMOKE_CONTAINER="$name" node --test tests/shutdown.test.js
 docker stop --time 20 "$name" >/dev/null

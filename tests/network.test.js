@@ -72,12 +72,18 @@ test(
     const map = {
       ...templates.map,
       name: "Acceptance arena",
-      objects: templates.map.objects
-        .filter((o) => o.kind === "floor" || o.kind === "team_spawn")
-        .slice(0, 3),
+      objects: [
+        ...templates.map.objects.filter(
+          (o) => o.kind === "floor" && o.position[1] < 0,
+        ),
+        ...templates.map.objects
+          .filter((o) => o.kind === "team_spawn")
+          .slice(0, 2),
+      ],
     };
-    map.objects[1].position = [0, 0.05, -5];
-    map.objects[2].position = [0, 0.05, 5];
+    const spawns = map.objects.filter((o) => o.kind === "team_spawn");
+    spawns[0].position = [2, 0, -6];
+    spawns[1].position = [2, 0, 6];
     const mode = {
       ...templates.modes[0],
       name: "Acceptance rules",
@@ -452,4 +458,53 @@ test("authentication, origin and health boundaries", async () => {
   assert.equal(health.status, 200);
   assert.ok(health.headers.get("content-security-policy"));
   assert.equal(health.headers.get("x-content-type-options"), "nosniff");
+});
+
+test("new map documents enforce the construction kit even against hostile clients", async () => {
+  const owner = await request("/api/session", "POST", {
+    name: "Kit acceptance",
+  });
+  const { map, kit, markers } = (await request("/api/templates")).data;
+  assert.equal(kit.length, 7);
+  assert.ok(!markers.some((s) => s.kind === "light"));
+  const index = map.objects.findIndex(
+    (o) => o.properties.piece === "rectangle_box",
+  );
+  for (const mutate of [
+    (m) => {
+      m.grid = false;
+    },
+    (m) => {
+      delete m.grid;
+    },
+    (m) => {
+      m.objects[index].position[0] += 0.25;
+    },
+    (m) => {
+      m.objects[index].scale[0] = 3;
+    },
+    (m) => {
+      m.objects[index].rotation = 0.7;
+    },
+    (m) => {
+      m.objects[index].properties.asset = "container";
+    },
+    (m) => {
+      m.objects[index].properties.piece = null;
+    },
+  ]) {
+    const bad = structuredClone(map);
+    mutate(bad);
+    assert.equal(
+      (
+        await request(
+          "/api/content/maps",
+          "POST",
+          { document: bad },
+          owner.cookie,
+        )
+      ).status,
+      400,
+    );
+  }
 });

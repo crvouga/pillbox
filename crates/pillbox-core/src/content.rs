@@ -164,6 +164,7 @@ pub struct WeaponStats {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Properties {
+    pub piece: Option<crate::BuildingPiece>,
     pub team: Option<u8>,
     pub target: Option<String>,
     pub weapon: Weapon,
@@ -177,6 +178,7 @@ pub struct Properties {
 impl Default for Properties {
     fn default() -> Self {
         Self {
+            piece: None,
             team: None,
             target: None,
             weapon: Weapon::Rifle,
@@ -203,6 +205,9 @@ pub struct MapObject {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Map {
+    /// Historical versions remain readable; all newly authored maps use the kit.
+    #[serde(default)]
+    pub grid: bool,
     pub name: String,
     pub skybox: String,
     pub objects: Vec<MapObject>,
@@ -251,6 +256,9 @@ impl Map {
             {
                 return Err(format!("Invalid object {}", o.id));
             }
+            if self.grid {
+                o.validate_grid()?;
+            }
             if o.kind == Primitive::TeleporterEntrance
                 && !self.objects.iter().any(|x| {
                     Some(&x.id) == o.properties.target.as_ref()
@@ -265,6 +273,21 @@ impl Map {
             ) && o.properties.team.is_none()
             {
                 return Err("Team spawns and flags require a team".into());
+            }
+        }
+        if self.grid {
+            let solids: Vec<_> = self.objects.iter().filter(|o| o.kind.solid()).collect();
+            for (i, a) in solids.iter().enumerate() {
+                for b in solids.iter().skip(i + 1) {
+                    let overlap =
+                        (a.grid_size() + b.grid_size()) * 0.5 - (a.position - b.position).abs();
+                    if overlap.min_element() > 0.001 {
+                        return Err(format!(
+                            "Pieces {} and {} overlap; snap their faces together",
+                            a.id, b.id
+                        ));
+                    }
+                }
             }
         }
         let spawns: Vec<_> = self.objects.iter().filter(|o| o.kind.spawn()).collect();
@@ -449,542 +472,5 @@ impl Mode {
 }
 /// Curated vertical arenas use exactly the primitives available in the editor.
 pub fn starter_map() -> Map {
-    arena_maps().remove(0)
-}
-pub fn arena_maps() -> Vec<Map> {
-    [
-        ("Foundry Nine", "#101c2c", "#54dfdf", "#ee9970"),
-        ("Helix Station", "#1a1734", "#ba99ff", "#ffbd69"),
-        ("Blacksite Relay", "#0d2427", "#82dcbc", "#ef7796"),
-    ]
-    .into_iter()
-    .enumerate()
-    .map(|(variant, (name, sky, accent, warm))| {
-        let mut objects = vec![];
-        let mut add = |id: &str,
-                       kind: Primitive,
-                       p: [f32; 3],
-                       s: [f32; 3],
-                       yaw: f32,
-                       team: Option<u8>,
-                       color: &str,
-                       label: &str,
-                       asset: Option<&str>| {
-            objects.push(MapObject {
-                id: id.into(),
-                kind,
-                position: Vec3::from_array(p),
-                rotation: yaw,
-                scale: Vec3::from_array(s),
-                properties: Properties {
-                    team,
-                    color: color.into(),
-                    label: label.into(),
-                    asset: asset.map(str::to_owned),
-                    ..Default::default()
-                },
-            });
-        };
-        add(
-            "ground",
-            Primitive::Floor,
-            [0., -0.5, 0.],
-            [64., 1., 64.],
-            0.,
-            None,
-            "#344451",
-            "LOWER CONCOURSE",
-            None,
-        );
-        for (id, x, z, sx, sz) in [
-            ("north", 0., -32., 64., 1.),
-            ("south", 0., 32., 64., 1.),
-            ("west", -32., 0., 1., 64.),
-            ("east", 32., 0., 1., 64.),
-        ] {
-            add(
-                id,
-                Primitive::Wall,
-                [x, 5., z],
-                [sx, 10., sz],
-                0.,
-                None,
-                "#263440",
-                "",
-                None,
-            );
-        }
-        // Three-level central control point with four approaches and covered underpass.
-        add(
-            "reactor-deck",
-            Primitive::Platform,
-            [0., 2.75, 0.],
-            [12., 0.5, 12.],
-            0.,
-            None,
-            "#536675",
-            "REACTOR DECK",
-            None,
-        );
-        add(
-            "hill",
-            Primitive::Hill,
-            [0., 3.5, 0.],
-            [6., 1., 6.],
-            0.,
-            None,
-            "#ffc879",
-            "CONTROL POINT",
-            None,
-        );
-        for (i, x, z) in [(0, -5., -5.), (1, 5., -5.), (2, -5., 5.), (3, 5., 5.)] {
-            add(
-                &format!("reactor-leg-{i}"),
-                Primitive::Pillar,
-                [x, 1.25, z],
-                [1., 2.5, 1.],
-                0.,
-                None,
-                "#263440",
-                "",
-                None,
-            );
-        }
-        for (t, z, dir) in [(0, -25., 1.), (1, 25., -1.)] {
-            let c = if t == 0 { accent } else { warm };
-            let yaw = if t == 0 { 0. } else { std::f32::consts::PI };
-            add(
-                &format!("base-deck-{t}"),
-                Primitive::Platform,
-                [0., 2.75, z],
-                [24., 0.5, 10.],
-                0.,
-                None,
-                "#536675",
-                "BASE DECK",
-                None,
-            );
-            for (i, x) in [-8., 0., 8.].into_iter().enumerate() {
-                add(
-                    &format!("spawn{t}-{i}"),
-                    Primitive::TeamSpawn,
-                    [x, 3.05, z],
-                    [1., 1., 1.],
-                    0.,
-                    Some(t),
-                    c,
-                    "SPAWN",
-                    None,
-                );
-            }
-            add(
-                &format!("base{t}"),
-                Primitive::FlagBase,
-                [0., 3.1, z - dir * 3.],
-                [3., 2., 3.],
-                0.,
-                Some(t),
-                c,
-                if t == 0 { "CYAN BASE" } else { "CORAL BASE" },
-                None,
-            );
-            // Spawn rooms remain open toward the arena and through two flank doors.
-            for x in [-12., 12.] {
-                add(
-                    &format!("base-wall-{t}-{x}"),
-                    Primitive::Wall,
-                    [x, 4.5, z],
-                    [0.5, 3., 10.],
-                    0.,
-                    None,
-                    "#384b5c",
-                    "",
-                    None,
-                );
-            }
-            add(
-                &format!("base-roof-{t}"),
-                Primitive::Platform,
-                [0., 5.75, z],
-                [24., 0.5, 10.],
-                0.,
-                None,
-                "#4e6170",
-                "COMMAND ROOF",
-                None,
-            );
-            add(
-                &format!("base-front-{t}"),
-                Primitive::Arch,
-                [0., 4.5, z + dir * 5.],
-                [12., 3., 0.5],
-                0.,
-                None,
-                c,
-                "",
-                None,
-            );
-            for x in [-8., 8.] {
-                add(
-                    &format!("base-ramp-{t}-{x}"),
-                    Primitive::Ramp,
-                    [x, 1.5, z + dir * 10.],
-                    [5., 3., 10.],
-                    yaw + std::f32::consts::PI,
-                    None,
-                    "#556b77",
-                    "BASE RAMP",
-                    None,
-                );
-            }
-            add(
-                &format!("mid-ramp-{t}"),
-                Primitive::Ramp,
-                [0., 1.5, -dir * 11.],
-                [6., 3., 10.],
-                yaw,
-                None,
-                "#556b77",
-                "REACTOR RAMP",
-                None,
-            );
-            for x in [-20_f32, 20.] {
-                add(
-                    &format!("upper-deck-{t}-{x}"),
-                    Primitive::Platform,
-                    [x.signum() * 22., 5.75, z],
-                    [18., 0.5, 10.],
-                    0.,
-                    None,
-                    "#516573",
-                    "SKY WALK",
-                    None,
-                );
-                add(
-                    &format!("upper-ramp-{t}-{x}"),
-                    Primitive::Ramp,
-                    [x.signum() * 29., 3., z + dir * 11.],
-                    [4., 6., 12.],
-                    yaw + std::f32::consts::PI,
-                    None,
-                    "#627b85",
-                    "SKY RAMP",
-                    None,
-                );
-                add(
-                    &format!("base-bridge-{t}-{x}"),
-                    Primitive::Bridge,
-                    [x.signum() * 14., 5.75, z],
-                    [8., 0.5, 4.],
-                    0.,
-                    None,
-                    "#536675",
-                    "",
-                    None,
-                );
-                add(
-                    &format!("upper-rail-{t}-{x}"),
-                    Primitive::Barrier,
-                    [x.signum() * 20., 6.55, z - dir * 4.7],
-                    [12., 1.1, 0.25],
-                    0.,
-                    None,
-                    c,
-                    "",
-                    None,
-                );
-                add(
-                    &format!("light-base-{t}-{x}"),
-                    Primitive::Light,
-                    [x, 8., z],
-                    [0.5, 0.2, 0.5],
-                    0.,
-                    None,
-                    c,
-                    "",
-                    None,
-                );
-            }
-            add(
-                &format!("jump-{t}"),
-                Primitive::JumpPad,
-                [14., 0.15, z + dir * 7.],
-                [3., 0.3, 3.],
-                0.,
-                None,
-                c,
-                "GRAVITY LIFT",
-                None,
-            );
-            add(
-                &format!("base-light-{t}"),
-                Primitive::Light,
-                [0., 5.8, z],
-                [4., 0.15, 1.],
-                0.,
-                None,
-                c,
-                "",
-                None,
-            );
-            add(
-                &format!("med-{t}"),
-                Primitive::HealthPickup,
-                [-6., 3.6, z - dir * 2.],
-                [1., 1., 1.],
-                0.,
-                None,
-                "#80ebad",
-                "MEDKIT",
-                None,
-            );
-            add(
-                &format!("armor-{t}"),
-                Primitive::ShieldPickup,
-                [6., 3.6, z - dir * 2.],
-                [1., 1., 1.],
-                0.,
-                None,
-                "#68cafa",
-                "SHIELD CELL",
-                None,
-            );
-            add(
-                &format!("console-{t}"),
-                Primitive::Box,
-                [10., 3.7, z - dir * 2.],
-                [1.5, 1.4, 1.3],
-                yaw,
-                None,
-                c,
-                "",
-                Some("computer"),
-            );
-        }
-        // Lateral rooms provide sheltered ground routes under a pair of bridges.
-        for (i, x) in [-22., 22.].into_iter().enumerate() {
-            add(
-                &format!("side-roof-{i}"),
-                Primitive::Platform,
-                [x, 3.75, 0.],
-                [12., 0.5, 16.],
-                0.,
-                None,
-                "#455967",
-                "MAINTENANCE",
-                None,
-            );
-            add(
-                &format!("side-back-{i}"),
-                Primitive::Wall,
-                [x + x.signum() * 6., 1.75, 0.],
-                [0.5, 3.5, 16.],
-                0.,
-                None,
-                "#334654",
-                "",
-                None,
-            );
-            for z in [-8., 8.] {
-                add(
-                    &format!("side-door-{i}-{z}"),
-                    Primitive::Arch,
-                    [x, 1.75, z],
-                    [12., 3.5, 0.5],
-                    0.,
-                    None,
-                    "#627888",
-                    "",
-                    None,
-                );
-            }
-            add(
-                &format!("side-light-{i}"),
-                Primitive::Light,
-                [x, 3.4, 0.],
-                [3., 0.15, 1.],
-                0.,
-                None,
-                accent,
-                "",
-                None,
-            );
-            add(
-                &format!("side-bridge-{i}"),
-                Primitive::Bridge,
-                [x, 5.75, 0.],
-                [5., 0.5, 40.],
-                0.,
-                None,
-                "#566e7e",
-                "UPPER GANTRY",
-                None,
-            );
-            for z in [-9., 9.] {
-                add(
-                    &format!("connector-{i}-{z}"),
-                    Primitive::Bridge,
-                    [x * 0.5, 5.75, z],
-                    [19., 0.5, 3.],
-                    0.,
-                    None,
-                    "#566e7e",
-                    "CROSS WALK",
-                    None,
-                );
-            }
-            // Center upper landing reachable from lower reactor via stairs.
-            add(
-                &format!("upper-mid-{i}"),
-                Primitive::Platform,
-                [x.signum() * 10., 5.75, 7.],
-                [3., 0.5, 4.],
-                0.,
-                None,
-                "#627987",
-                "OVERLOOK",
-                None,
-            );
-            add(
-                &format!("mid-stairs-{i}"),
-                Primitive::Stairs,
-                [x.signum() * 10., 4.5, 0.],
-                [3., 3., 12.],
-                0.,
-                None,
-                "#708997",
-                "OVERLOOK STAIRS",
-                None,
-            );
-            add(
-                &format!("stair-approach-{i}"),
-                Primitive::Platform,
-                [x.signum() * 8., 2.75, -8.],
-                [7., 0.5, 4.],
-                0.,
-                None,
-                "#627987",
-                "",
-                None,
-            );
-            // Low cover is deliberately staggered, leaving a continuous lower lane.
-            for (j, z) in [-14., -5., 5., 14.].into_iter().enumerate() {
-                add(
-                    &format!("crate-{i}-{j}"),
-                    Primitive::Box,
-                    [x.signum() * 12., 1., z],
-                    [2.5, 2., 2.5],
-                    j as f32 * 0.22,
-                    None,
-                    "#657986",
-                    "CARGO",
-                    Some("container-wide"),
-                );
-            }
-            add(
-                &format!("room-crate-{i}"),
-                Primitive::Box,
-                [x + 2., 1.2, 2.],
-                [2., 2.4, 2.],
-                0.,
-                None,
-                "#6e8394",
-                "CARGO",
-                Some("container"),
-            );
-            add(
-                &format!("terminal-{i}"),
-                Primitive::Box,
-                [x + x.signum() * 4., 0.9, -3.],
-                [2.4, 1.8, 1.4],
-                0.,
-                None,
-                "#657986",
-                "",
-                Some("computer-wide"),
-            );
-        }
-        for (i, weapon, p) in [
-            (0, Weapon::Shotgun, [-22., 0.7, 0.]),
-            (1, Weapon::Rocket, [0., 3.7, 0.]),
-            (2, Weapon::Sniper, [20., 6.7, -25.]),
-            (3, Weapon::Precision, [-20., 6.7, 25.]),
-            (4, Weapon::Rifle, [10., 0.7, 0.]),
-        ] {
-            add(
-                &format!("weapon-{i}"),
-                Primitive::WeaponSpawn,
-                p,
-                [1.5, 1.5, 1.5],
-                0.,
-                None,
-                "#ffca78",
-                "POWER WEAPON",
-                None,
-            );
-            let _ = weapon;
-        }
-        for (i, w) in [
-            Weapon::Shotgun,
-            Weapon::Rocket,
-            Weapon::Sniper,
-            Weapon::Precision,
-            Weapon::Rifle,
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            objects
-                .iter_mut()
-                .find(|o| o.id == format!("weapon-{i}"))
-                .unwrap()
-                .properties
-                .weapon = w;
-        }
-        for (i, x, z, y) in [
-            (0, 0., 0., 0.7),
-            (1, -22., 5., 0.7),
-            (2, 22., -5., 0.7),
-            (3, -20., -23., 6.7),
-            (4, 20., 23., 6.7),
-        ] {
-            objects.push(MapObject {
-                id: format!("ammo-{i}"),
-                kind: Primitive::AmmoPickup,
-                position: Vec3::new(x, y, z),
-                rotation: 0.,
-                scale: Vec3::ONE,
-                properties: Properties {
-                    color: "#ffca78".into(),
-                    label: "AMMO CACHE".into(),
-                    ..Default::default()
-                },
-            });
-        }
-        for o in &mut objects {
-            if o.kind == Primitive::JumpPad {
-                o.properties.strength = 20.;
-            }
-        }
-        // Theme variations rotate the whole plan and change cover distribution;
-        // all variants retain readable team colors and navigable three-level routes.
-        if variant > 0 {
-            for o in &mut objects {
-                let a = variant as f32 * std::f32::consts::FRAC_PI_2;
-                let (sn, cs) = a.sin_cos();
-                o.position = Vec3::new(
-                    cs * o.position.x + sn * o.position.z,
-                    o.position.y,
-                    -sn * o.position.x + cs * o.position.z,
-                );
-                o.rotation += a;
-            }
-        }
-        Map {
-            name: name.into(),
-            skybox: sky.into(),
-            objects,
-        }
-    })
-    .collect()
+    crate::arena_maps().remove(0)
 }

@@ -40,12 +40,18 @@ test(
     const map = {
       ...templates.map,
       name: "Practice acceptance map",
-      objects: templates.map.objects
-        .filter((o) => o.kind === "floor" || o.kind === "team_spawn")
-        .slice(0, 3),
+      objects: [
+        ...templates.map.objects.filter(
+          (o) => o.kind === "floor" && o.position[1] < 0,
+        ),
+        ...templates.map.objects
+          .filter((o) => o.kind === "team_spawn")
+          .slice(0, 2),
+      ],
     };
-    map.objects[1].position = [0, 0.05, -5];
-    map.objects[2].position = [0, 0.05, 5];
+    const spawns = map.objects.filter((o) => o.kind === "team_spawn");
+    spawns[0].position = [2, 0, -6];
+    spawns[1].position = [2, 0, 6];
     const mv = (
       await request(
         "/api/content/maps",

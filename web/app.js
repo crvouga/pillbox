@@ -307,7 +307,8 @@ action("map-new", () => {
     name: "Untitled arena",
     objects: clone(
       templates.map.objects.filter(
-        (o) => o.kind === "floor" || o.kind === "team_spawn",
+        (o) =>
+          (o.kind === "floor" && o.position[1] < 0) || o.kind === "team_spawn",
       ),
     ),
   });
@@ -913,8 +914,8 @@ function animate(time) {
           state: null,
           local_id: "",
           predicted: null,
-          camera: [Math.sin(orbit) * 42, 32, Math.cos(orbit) * 42],
-          target: [0, 0, 0],
+          camera: [Math.sin(orbit) * 70, 62, Math.cos(orbit) * 70],
+          target: [0, 6, 0],
         }),
       );
     }
@@ -929,6 +930,7 @@ function animate(time) {
 (async () => {
   try {
     templates = await api("/templates");
+    editor.setKit(templates.kit, templates.markers);
     editor.load(templates.map);
     loadMode(templates.modes[0]);
     for (const m of templates.modes) {

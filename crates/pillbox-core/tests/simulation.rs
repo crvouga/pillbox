@@ -730,6 +730,7 @@ fn test_map() -> Map {
         "#ffe599",
     );
     Map {
+        grid: false,
         name: "Prism Courtyard".into(),
         skybox: "#141c35".into(),
         objects,
@@ -737,25 +738,24 @@ fn test_map() -> Map {
 }
 
 #[test]
-fn curated_arenas_have_valid_spawns_vertical_routes_cover_and_lighting() {
+fn curated_arenas_use_only_the_grid_kit_with_supported_spawns_and_clear_headroom() {
     for map in arena_maps() {
         map.validate().unwrap();
-        assert!(map.objects.len() > 75);
+        assert!(map.grid);
+        assert!(map.objects.len() <= 512);
         assert!(
             map.objects
                 .iter()
-                .filter(|o| o.kind == Primitive::Light)
-                .count()
-                >= 6
+                .all(|o| o.properties.asset.is_none() && o.kind != Primitive::Light)
         );
+        for o in &map.objects {
+            o.validate_grid().unwrap();
+        }
         assert!(
             map.objects
                 .iter()
-                .filter(|o| o.kind == Primitive::Ramp)
-                .count()
-                >= 8
+                .any(|o| o.kind == Primitive::Floor && o.position.y == 15.5)
         );
-        assert!(map.objects.iter().any(|o| o.kind == Primitive::Stairs));
         for mode in [
             Mode::builtin("FFA", Objective::None, false),
             Mode::builtin("CTF", Objective::Flags, true),
@@ -770,13 +770,62 @@ fn curated_arenas_have_valid_spawns_vertical_routes_cover_and_lighting() {
                 move_player_with_physics(&map, &physics, &mut p, Input::default(), tick);
             }
             assert!(
-                (p.position.y - 3.).abs() < 0.02,
-                "{} spawn {} not supported {:?}",
+                p.position.y.abs() < 0.02,
+                "{} {} unsupported {:?}",
                 map.name,
                 spawn.id,
                 p.position
             );
             assert!(p.grounded);
+        }
+        // A standing player, even lifted five meters, fits beneath an 8 m deck.
+        for x in [-22., 14.] {
+            assert!(
+                physics.clear(Vec3::new(x, 5., 2.)),
+                "{} squashed underpass",
+                map.name
+            );
+        }
+    }
+}
+#[test]
+fn grid_kit_rejects_free_placement_resize_rotation_decoration_and_interpenetration() {
+    let map = starter_map();
+    let index = map
+        .objects
+        .iter()
+        .position(|o| o.properties.piece == Some(BuildingPiece::RectangleBox))
+        .unwrap();
+    for case in 0..7 {
+        let mut bad = map.clone();
+        let o = &mut bad.objects[index];
+        match case {
+            0 => o.position.x += 0.5,
+            1 => o.position.y += 0.25,
+            2 => o.scale.x += 1.,
+            3 => o.rotation += 0.2,
+            4 => o.properties.asset = Some("container".into()),
+            5 => o.properties.piece = None,
+            _ => {
+                let mut duplicate = o.clone();
+                duplicate.id = "interpenetrating".into();
+                bad.objects.push(duplicate);
+            }
+        }
+        assert!(bad.validate().is_err(), "case {case} accepted");
+    }
+    let mut ball = MapObject::brick("ball", BuildingPiece::Sphere, [4, 0, -8], 0);
+    ball.validate_grid().unwrap();
+    ball.position.x += 2.;
+    assert!(ball.validate_grid().is_err());
+    for piece in BuildingPiece::ALL {
+        for turn in 0..4 {
+            let o = MapObject::brick("brick", piece, [-8, 7, 12], turn);
+            o.validate_grid().unwrap();
+            assert_eq!(o.grid_anchor(), Vec3::new(-8., 7., 12.));
+            let decoded: MapObject =
+                serde_json::from_str(&serde_json::to_string(&o).unwrap()).unwrap();
+            decoded.validate_grid().unwrap();
         }
     }
 }
@@ -858,56 +907,49 @@ fn box3d_climbs_steps_and_follows_downhill_without_falling_through() {
     assert!(p.grounded);
 }
 #[test]
-fn players_can_walk_curated_ramps_and_stairs_to_all_three_levels() {
+fn players_can_walk_both_ramp_routes_to_eight_and_sixteen_meter_levels() {
     for (variant, map) in arena_maps().into_iter().enumerate() {
         let physics = PhysicsMap::new(&map);
-        let angle = variant as f32 * std::f32::consts::FRAC_PI_2;
-        let (s, c) = angle.sin_cos();
-        let rotate = |v: Vec3| Vec3::new(c * v.x + s * v.z, v.y, -s * v.x + c * v.z);
-        for (route, start, end) in [
-            ("base", Vec3::new(8., 0.05, -9.), Vec3::new(8., 3., -25.)),
-            ("reactor", Vec3::new(0., 0.05, -17.), Vec3::new(0., 3., -4.)),
-            (
-                "skywalk",
-                Vec3::new(29., 0.05, -7.),
-                Vec3::new(29., 6., -25.),
-            ),
-            (
-                "overlook stairs",
-                Vec3::new(10., 3.05, -8.),
-                Vec3::new(10., 6., 7.),
-            ),
-        ] {
-            let start = rotate(start);
-            let end = rotate(end);
-            let mut player = Player::new("climber".into(), "Climber".into(), 0, start);
-            for tick in 0..240 {
-                let delta = end - player.position;
-                if Vec3::new(delta.x, 0., delta.z).length() < 0.2 {
-                    break;
+        for (side, x, direction) in [(0, -18., 1.), (1, 18., -1.)] {
+            for (route, start, end) in [
+                (
+                    "lower",
+                    Vec3::new(x, 0., if variant == 1 { -37. } else { -29. } * direction),
+                    Vec3::new(x, 8., -6. * direction),
+                ),
+                (
+                    "upper",
+                    Vec3::new(x, 8., 6. * direction),
+                    Vec3::new(x, 16., 30. * direction),
+                ),
+            ] {
+                let mut p = Player::new("climber".into(), "Climber".into(), 0, start);
+                for tick in 0..360 {
+                    let delta = end - p.position;
+                    if Vec3::new(delta.x, 0., delta.z).length() < 0.15 {
+                        break;
+                    }
+                    let d = Vec3::new(delta.x, 0., delta.z).normalize();
+                    move_player_with_physics(
+                        &map,
+                        &physics,
+                        &mut p,
+                        Input {
+                            x: d.x,
+                            z: d.z,
+                            ..Default::default()
+                        },
+                        tick,
+                    );
                 }
-                let direction = Vec3::new(delta.x, 0., delta.z).normalize();
-                move_player_with_physics(
-                    &map,
-                    &physics,
-                    &mut player,
-                    Input {
-                        x: direction.x,
-                        z: direction.z,
-                        ..Default::default()
-                    },
-                    tick,
+                assert!(
+                    p.position.distance(end) < 0.3,
+                    "{} {side} {route} blocked {:?} expected {end:?}",
+                    map.name,
+                    p.position
                 );
+                assert!(p.grounded);
             }
-            assert!(
-                player.position.distance(end) < 0.3,
-                "{} {route} blocked at {:?}, expected {end:?}; grounded {} velocity {:?}",
-                map.name,
-                player.position,
-                player.grounded,
-                player.velocity
-            );
-            assert!(player.grounded, "{} {route} unsupported", map.name);
         }
     }
 }
@@ -926,12 +968,21 @@ fn opponents_can_route_between_bases_and_reach_every_power_weapon() {
             .iter()
             .filter(|o| o.kind == Primitive::WeaponSpawn || o.id == "spawn1-0")
         {
+            let route = w.navigation.route(start, o.position);
             assert!(
-                !w.navigation.route(start, o.position).is_empty(),
+                !route.is_empty(),
                 "{} unreachable {} {:?}",
                 map.name,
                 o.id,
                 o.position
+            );
+            let end = route.last().unwrap();
+            assert!(
+                end.distance(o.position) < 2.,
+                "{} {} route reaches wrong surface {:?}",
+                map.name,
+                o.id,
+                end
             );
         }
     }
@@ -954,7 +1005,7 @@ fn dense_valid_creator_geometry_cannot_build_an_unbounded_bot_graph() {
     map.validate().unwrap();
     let navigation = Navigation::new(&map, &PhysicsMap::new(&map));
     assert!(!navigation.nodes.is_empty());
-    assert!(navigation.nodes.len() <= 2048);
+    assert!(navigation.nodes.len() <= 4096);
 }
 #[test]
 fn practice_opponents_move_fire_reload_and_score_through_authoritative_rules() {
@@ -986,4 +1037,33 @@ fn practice_opponents_move_fire_reload_and_score_through_authoritative_rules() {
         assert!(p.position.is_finite());
         assert!(p.position.y > -2., "bot fell out {:?}", p.position);
     }
+}
+
+#[test]
+fn box3d_clearance_rejects_embedded_capsule_cores_and_preserves_surface_contacts() {
+    let mut map = test_map();
+    map.objects = vec![MapObject::brick(
+        "test hull",
+        BuildingPiece::SquareBox,
+        [0, 0, 0],
+        0,
+    )];
+    let physics = PhysicsMap::new(&map);
+    assert!(!physics.clear(Vec3::new(2., 2., 2.)), "embedded core");
+    assert!(
+        !physics.clear(Vec3::new(2., -1., 2.)),
+        "core crosses a face"
+    );
+    assert!(
+        !physics.clear(Vec3::new(4.2, 0., 2.)),
+        "rounded capsule overlaps a face"
+    );
+    assert!(
+        physics.clear(Vec3::new(2., 4., 2.)),
+        "standing contact stays clear"
+    );
+    assert!(
+        physics.clear(Vec3::new(4.41, 0., 2.)),
+        "capsule beside the hull stays clear"
+    );
 }

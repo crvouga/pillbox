@@ -6,8 +6,8 @@
 
 Run the service and open `http://127.0.0.1:8080`. **PLAY NOW** creates an unlisted
 five-minute, fifteen-elimination practice match with three authoritative bots.
-Choose Foundry Nine, Helix Station or Blacksite Relay; they share a connected
-three-level arena plan with different orientations and colors. Friends can join
+Choose Terraces, Crosscut or Courtyard: grid-built arenas with different middle
+routes, 8 m decks and 16 m overlooks. See [map design](map-design.md). Friends can join
 through the room invite. The host form also supports zero to four opponents.
 
 Use WASD, Space, mouse aim, left click to fire, right click to aim down sights,
@@ -23,13 +23,14 @@ available in the match.
   server and WASM prediction use the same controller. Curved primitives are
   faceted; stairs and arches are compound colliders. Hitscan retains analytical
   map ray tests. Players do not collide with each other.
-- Arenas have elevated bases, ground maintenance rooms, cargo and console cover,
-  reactor ramps, overlook stairs, upper gantries, crossing bridges, outer sky
-  ramps, gravity lifts, supplies and power weapons. Walkable levels are 0, 3 and
-  6 meters. Outer ramps and landing gaps avoid overhead bridges and railings.
-- Bevy renders global shadowed directional light, placed colored lights,
-  emissive architectural trims, fog, floor grid panels and licensed station
-  models. The sandbox can place lights, labels and station props.
+- Arenas use seven fixed building pieces, face-aligned anchors, 4 m horizontal
+  cells, 1 m height increments and quarter turns. Structural cover and supports
+  replace decorative props. Two 8 m-wide ramp routes reach levels at 0, 8 and
+  16 m; middle decks leave 7 m of clearance. The editor and server share the
+  catalog and enforce snapping, fixed sizing and non-overlap.
+- Every map receives shadowed daylight and ambient fill. Matte surfaces share
+  materials for repeated kit meshes. There are no emissive architectural strips,
+  painted floor lines, station dressing or pickup pedestals.
 - All six carried weapons have licensed models in first and third person;
   first-person models show recoil, movement bob, reload motion and ADS. Shot
   tracers end at the authoritative wall impact; explosions have a brief visual.
@@ -71,7 +72,7 @@ in [assets](../web/assets/README.md).
 ## Verification
 
 Portable commands are in the repository README. The overhaul adds regression
-coverage for map spawn support/lighting, rotated thin-wall sweeps, ascending and
+coverage for the grid kit, map spawn support/headroom, rotated thin-wall sweeps, ascending and
 descending stairs, actual controller traversal of every arena's three levels,
 navigation to all power weapons, and sustained bot combat. HTTP/WebSocket
 acceptance additionally checks bot capacity, hostile bot configuration, combat,

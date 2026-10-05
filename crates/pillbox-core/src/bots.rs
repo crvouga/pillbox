@@ -37,8 +37,17 @@ pub struct Navigation {
 impl Navigation {
     pub fn new(map: &Map, physics: &PhysicsMap) -> Self {
         let mut nodes = vec![];
-        'cells: for x in -15..=15 {
-            for z in -15..=15 {
+        let mut low = Vec3::splat(48.);
+        let mut high = Vec3::splat(-48.);
+        for o in map.objects.iter().filter(|o| o.kind.solid()) {
+            let radius = o.scale.x.max(o.scale.z) * 0.5;
+            low = low.min(o.position - Vec3::splat(radius));
+            high = high.max(o.position + Vec3::splat(radius));
+        }
+        let cells =
+            |a: f32, b: f32| (a.max(-48.) / 2.).floor() as i32..=(b.min(48.) / 2.).ceil() as i32;
+        'cells: for x in cells(low.x, high.x) {
+            for z in cells(low.z, high.z) {
                 let p = Vec3::new(x as f32 * 2., 0., z as f32 * 2.);
                 let mut heights = vec![];
                 for o in map.objects.iter().filter(|o| o.kind.solid()) {
@@ -52,14 +61,14 @@ impl Navigation {
                 heights.sort_by(f32::total_cmp);
                 heights.dedup_by(|a, b| (*a - *b).abs() < 0.05);
                 // Creator maps can stack hundreds of platforms. Bound both
-                // surface probes and the quadratic edge graph independently
+                // surface probes and the spatial edge graph independently
                 // of hostile-but-valid geometry; bots are a local-arena aid.
                 let stride = heights.len().div_ceil(8).max(1);
                 for h in heights.into_iter().step_by(stride) {
                     let point = Vec3::new(p.x, h + 0.06, p.z);
                     if physics.clear(point) {
                         nodes.push(point);
-                        if nodes.len() >= 2048 {
+                        if nodes.len() >= 4096 {
                             break 'cells;
                         }
                     }
@@ -67,8 +76,23 @@ impl Navigation {
             }
         }
         let mut edges = vec![vec![]; nodes.len()];
+        let mut columns: BTreeMap<(i32, i32), Vec<usize>> = BTreeMap::new();
+        for (i, p) in nodes.iter().enumerate() {
+            columns
+                .entry(((p.x / 2.).round() as i32, (p.z / 2.).round() as i32))
+                .or_default()
+                .push(i);
+        }
         for (i, a) in nodes.iter().enumerate() {
-            for (j, b) in nodes.iter().enumerate().skip(i + 1) {
+            let cell = ((a.x / 2.).round() as i32, (a.z / 2.).round() as i32);
+            let neighbors = (-1..=1).flat_map(|x| (-1..=1).map(move |z| (cell.0 + x, cell.1 + z)));
+            for j in neighbors
+                .filter_map(|key| columns.get(&key))
+                .flatten()
+                .copied()
+                .filter(|j| *j > i)
+            {
+                let b = &nodes[j];
                 let d = *b - *a;
                 if d.x.abs() <= 2.01
                     && d.z.abs() <= 2.01

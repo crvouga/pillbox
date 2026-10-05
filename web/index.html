@@ -13,7 +13,7 @@
       <header>
         <a class="brand" href="/" aria-label="Pillbox home"
           ><span class="pill-logo"></span>PILLBOX<span class="alpha"
-            >ARENA 02</span
+            >ARENA 03</span
           ></a
         >
         <nav>
@@ -28,14 +28,14 @@
           <div class="eyebrow">A MULTIPLAYER PLAYGROUND</div>
           <h1>Take the<br /><span>high ground.</span></h1>
           <p>
-            Three floors. Six weapons. No safe corners.<br />Jump into a
+            Sixteen meters of high ground. Six weapons.<br />Jump into a
             skirmish, or build your own arena.
           </p>
           <div class="practice-picker">
             <select id="practice-map" aria-label="Practice arena">
-              <option value="0">Foundry Nine — industrial</option>
-              <option value="1">Helix Station — orbital</option>
-              <option value="2">Blacksite Relay — night ops</option></select
+              <option value="0">Terraces — broad crossing</option>
+              <option value="1">Crosscut — twin crossings</option>
+              <option value="2">Courtyard — elevated ring</option></select
             ><button id="quick-play" class="primary">
               PLAY NOW <span>↗</span>
             </button>
@@ -96,31 +96,40 @@
           <aside class="panel">
             <label>Map name<input id="map-name" maxlength="64" /></label
             ><label>Sky color<input type="color" id="map-sky" /></label>
-            <h3>Primitives</h3>
-            <select id="primitive" aria-label="Primitive type"></select
-            ><button id="place" class="primary full">＋ Place on grid</button>
+            <h3>Construction kit</h3>
+            <select id="primitive" aria-label="Building piece"></select>
+            <button id="place" class="primary full">＋ Place piece</button>
             <p class="muted">
-              Click the grid to place. Select an object to transform it.
-              Coordinates are in meters.
+              Fixed sizes. 4 m horizontal cells, 1 m height steps, 90° turns.
+              Coordinates use the lower corner so faces meet exactly.
             </p>
+            <h3>Gameplay markers</h3>
+            <select id="marker" aria-label="Gameplay marker"></select>
+            <button id="place-marker" class="full">＋ Place marker</button>
             <label
-              >Grid snap<select id="snap">
-                <option value="1">1 meter</option>
-                <option value="0.5">0.5 meters</option>
-                <option value="0.25">0.25 meters</option>
-              </select></label
-            ><label
+              >Build base height (m)<input
+                id="layer"
+                type="number"
+                step="1"
+                value="0"
+            /></label>
+            <label
+              ><input id="all-layers" type="checkbox" /> Show / select every
+              level</label
+            >
+            <label
               >Grid extent<select id="extent">
-                <option value="25">50 m</option>
-                <option value="50">100 m</option>
-                <option value="150">300 m</option>
+                <option value="48" selected>96 m</option>
+                <option value="80">160 m</option>
+                <option value="152">304 m</option>
               </select></label
-            ><label>Objects<select id="object-list" size="8"></select></label>
+            >
+            <label>Objects<select id="object-list" size="8"></select></label>
           </aside>
           <div class="grid-panel">
             <div class="grid-label">
-              <span>TOP VIEW · X / Z</span
-              ><span id="editor-status">Select or place a primitive</span>
+              <span>TOP VIEW · 4 M CELLS</span
+              ><span id="editor-status">Select or place a piece</span>
             </div>
             <canvas
               id="grid"
@@ -141,45 +150,21 @@
             <div id="object-fields" class="hidden">
               <label>Object ID<input id="object-id" readonly /></label>
               <div class="triplet">
-                <label>X<input id="px" type="number" step="0.25" /></label
-                ><label>Height<input id="py" type="number" step="0.25" /></label
-                ><label>Z<input id="pz" type="number" step="0.25" /></label>
+                <label>Base X<input id="px" type="number" step="4" /></label
+                ><label>Base Y<input id="py" type="number" step="1" /></label
+                ><label>Base Z<input id="pz" type="number" step="4" /></label>
               </div>
               <div class="triplet">
-                <label
-                  >Width<input
-                    id="sx"
-                    type="number"
-                    min="0.1"
-                    step="0.25" /></label
-                ><label
-                  >Height<input
-                    id="sy"
-                    type="number"
-                    min="0.1"
-                    step="0.25" /></label
-                ><label
-                  >Depth<input id="sz" type="number" min="0.1" step="0.25"
-                /></label>
+                <label>Width<input id="sx" type="number" readonly /></label>
+                <label>Height<input id="sy" type="number" readonly /></label>
+                <label>Depth<input id="sz" type="number" readonly /></label>
               </div>
               <label
                 >Rotation (degrees)<input
                   id="rotation"
                   type="number"
-                  step="15" /></label
+                  step="90" /></label
               ><label>HUD label<input id="object-label" maxlength="64" /></label
-              ><label
-                >Station model<select id="object-asset">
-                  <option value="">Primitive geometry</option>
-                  <option>container</option>
-                  <option>container-wide</option>
-                  <option>container-tall</option>
-                  <option>computer</option>
-                  <option>computer-wide</option>
-                  <option>pipe</option>
-                  <option>pipe-bend</option>
-                  <option>structure-panel</option>
-                </select></label
               ><label>Color<input id="object-color" type="color" /></label
               ><label
                 >Team<select id="object-team">

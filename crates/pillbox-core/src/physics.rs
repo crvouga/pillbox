@@ -148,6 +148,40 @@ impl PhysicsMap {
     pub fn clear(&self, feet: Vec3) -> bool {
         self.nearby(feet).all(|c| {
             let capsule = Self::capsule(c, feet);
+            // Reject a capsule core that intersects the convex hull before GJK.
+            // Box3D's zero-distance witness assertion loses precision for deeply
+            // embedded segments. Plane clipping also avoids querying such cores
+            // during navigation probes inside tall stacked construction.
+            let start = g(capsule.center1);
+            let delta = g(capsule.center2) - start;
+            let mut lower = 0_f32;
+            let mut upper = 1_f32;
+            let mut intersects = true;
+            for plane in &c.hull.planes {
+                let normal = g(plane.normal);
+                let distance = plane.offset + 0.000001 - normal.dot(start);
+                let denominator = normal.dot(delta);
+                if denominator.abs() < 0.000001 {
+                    if distance < 0. {
+                        intersects = false;
+                        break;
+                    }
+                } else {
+                    let fraction = distance / denominator;
+                    if denominator < 0. {
+                        lower = lower.max(fraction);
+                    } else {
+                        upper = upper.min(fraction);
+                    }
+                    if lower > upper {
+                        intersects = false;
+                        break;
+                    }
+                }
+            }
+            if intersects {
+                return false;
+            }
             let input = DistanceInput {
                 proxy_a: make_proxy(&c.hull.points, 0.),
                 proxy_b: make_proxy(&[capsule.center1, capsule.center2], RADIUS),

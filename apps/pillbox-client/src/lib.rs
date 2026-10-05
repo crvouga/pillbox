@@ -162,7 +162,7 @@ fn build_app(headless: bool) -> App {
     app.insert_resource(ClearColor(Color::srgb(0.06, 0.08, 0.16)))
         .insert_resource(GlobalAmbientLight {
             color: Color::WHITE,
-            brightness: 160.,
+            brightness: 500.,
             ..default()
         })
         .insert_resource(DirectionalLightShadowMap { size: 2048 })
@@ -199,10 +199,10 @@ fn setup(
             ..default()
         }),
         DistanceFog {
-            color: Color::srgb(0.07, 0.11, 0.16),
+            color: Color::srgb(0.58, 0.65, 0.69),
             falloff: FogFalloff::Linear {
-                start: 22.,
-                end: 100.,
+                start: 70.,
+                end: 180.,
             },
             ..default()
         },
@@ -212,8 +212,8 @@ fn setup(
     ));
     commands.spawn((
         DirectionalLight {
-            illuminance: 9000.,
-            color: Color::srgb(0.76, 0.86, 1.),
+            illuminance: 6000.,
+            color: Color::srgb(1., 0.96, 0.9),
             shadows_enabled: true,
             ..default()
         },
@@ -336,6 +336,8 @@ fn receive(
     let sphere = meshes.add(Sphere::new(0.5));
     let cylinder = meshes.add(Cylinder::new(0.5, 1.));
     let ramp = meshes.add(wedge());
+    // Share surface handles so repeated kit meshes can be instanced together.
+    let mut surface_materials = std::collections::BTreeMap::new();
     for o in map.objects {
         let tint = if o.kind.spawn() {
             if o.properties.team == Some(1) {
@@ -346,18 +348,18 @@ fn receive(
         } else {
             color(&o.properties.color)
         };
-        let material = materials.add(StandardMaterial {
-            base_color: tint,
-            perceptual_roughness: 0.65,
-            metallic: if o.kind.solid() { 0.35 } else { 0. },
-            emissive: if o.kind.solid() {
-                LinearRgba::BLACK
-            } else {
-                LinearRgba::from(tint) * 2.
-            },
-            unlit: !o.kind.solid(),
-            ..default()
-        });
+        let material = surface_materials
+            .entry(o.properties.color.clone())
+            .or_insert_with(|| {
+                materials.add(StandardMaterial {
+                    base_color: tint,
+                    perceptual_roughness: 0.9,
+                    metallic: 0.,
+                    emissive: LinearRgba::BLACK,
+                    ..default()
+                })
+            })
+            .clone();
         let base = Vec3::from_array(o.position.to_array());
         let scale = Vec3::from_array(o.scale.to_array());
         let rotation = Quat::from_rotation_y(o.rotation);
@@ -376,88 +378,6 @@ fn receive(
                     kind: o.kind,
                 },
             ));
-        }
-        if let Some(asset) = &o.properties.asset {
-            let bounds = match asset.as_str() {
-                "container" => Vec3::new(0.575, 0.6, 0.575),
-                "container-wide" => Vec3::new(0.6, 0.7, 0.6),
-                "container-tall" => Vec3::new(0.6, 0.9, 0.6),
-                "computer" => Vec3::new(0.4, 0.661, 0.438),
-                "computer-wide" => Vec3::new(0.8, 0.497, 0.534),
-                "pipe" => Vec3::new(0.246, 0.5, 0.285),
-                "pipe-bend" => Vec3::new(0.5, 0.5, 0.285),
-                _ => Vec3::new(0.85, 0.125, 0.85),
-            };
-            commands.spawn((
-                SceneRoot(assets.load(format!("assets/models/station/{asset}.glb#Scene0"))),
-                Transform {
-                    translation: base - Vec3::Y * scale.y * 0.5,
-                    rotation,
-                    scale: scale / bounds,
-                },
-                Geometry {
-                    id: o.id.clone(),
-                    kind: o.kind,
-                },
-            ));
-            continue;
-        }
-        // Team trims turn primitive construction into readable industrial architecture.
-        if matches!(
-            o.kind,
-            Primitive::Platform | Primitive::Bridge | Primitive::Barrier | Primitive::Arch
-        ) {
-            let trim = materials.add(StandardMaterial {
-                base_color: Color::srgb(0.16, 0.48, 0.53),
-                emissive: LinearRgba::new(0.05, 0.5, 0.6, 1.) * 1.5,
-                ..default()
-            });
-            for z in [-scale.z * 0.5 + 0.05, scale.z * 0.5 - 0.05] {
-                commands.spawn((
-                    Mesh3d(cube.clone()),
-                    MeshMaterial3d(trim.clone()),
-                    Transform {
-                        translation: base + rotation * Vec3::new(0., scale.y * 0.5 + 0.02, z),
-                        rotation,
-                        scale: Vec3::new(scale.x, 0.04, 0.08),
-                    },
-                    Geometry {
-                        id: o.id.clone(),
-                        kind: o.kind,
-                    },
-                ));
-            }
-        }
-        if o.kind == Primitive::Floor {
-            let line = materials.add(StandardMaterial {
-                base_color: Color::srgb(0.12, 0.2, 0.25),
-                perceptual_roughness: 0.8,
-                ..default()
-            });
-            for axis in [0, 2] {
-                for i in -16..=16 {
-                    let mut offset = Vec3::Y * (scale.y * 0.5 + 0.002);
-                    offset[axis] = i as f32 * 4.;
-                    if offset[axis].abs() > scale[axis] * 0.5 {
-                        continue;
-                    }
-                    let mut size = Vec3::new(scale.x, 0.008, scale.z);
-                    size[axis] = 0.025;
-                    commands.spawn((
-                        Mesh3d(cube.clone()),
-                        MeshMaterial3d(line.clone()),
-                        Transform {
-                            translation: base + rotation * offset,
-                            rotation,
-                            scale: size,
-                        },
-                        Geometry {
-                            id: o.id.clone(),
-                            kind: o.kind,
-                        },
-                    ));
-                }
-            }
         }
         let mut spawn = |mesh: Handle<Mesh>, offset: Vec3, size: Vec3| {
             commands.spawn((
@@ -550,22 +470,16 @@ fn receive(
                 } else {
                     spawn(cube.clone(), Vec3::ZERO, Vec3::splat(0.55));
                 }
-                commands.spawn((
-                    Mesh3d(cylinder.clone()),
-                    MeshMaterial3d(material.clone()),
-                    Transform::from_translation(base - Vec3::Y * 0.45)
-                        .with_scale(Vec3::new(1.2, 0.08, 1.2)),
-                    Geometry {
-                        id: o.id.clone(),
-                        kind: o.kind,
-                    },
-                ));
             }
-            _ => spawn(
+            Primitive::JumpPad
+            | Primitive::TeleporterEntrance
+            | Primitive::SpeedBoost
+            | Primitive::GravityModifier => spawn(
                 cube.clone(),
                 Vec3::new(0., -scale.y * 0.5 + 0.06, 0.),
                 Vec3::new(scale.x, 0.12, scale.z),
             ),
+            _ => (),
         }
     }
 }
@@ -681,7 +595,7 @@ fn render_camera(
         return;
     };
     if let Projection::Perspective(p) = &mut *projection {
-        p.fov = if frame.ads {
+        p.fov = if frame.ads || frame.camera.is_some() {
             50_f32.to_radians()
         } else {
             85_f32.to_radians()

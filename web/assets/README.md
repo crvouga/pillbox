@@ -7,14 +7,14 @@ these files locally; it makes no runtime request to an asset marketplace or TTS 
 | Source                                                                    | Bundled use                                                   | Processing                                   |
 | ------------------------------------------------------------------------- | ------------------------------------------------------------- | -------------------------------------------- |
 | [Blaster Kit 2.1](https://kenney.nl/assets/blaster-kit)                   | Six first-person/third-person/pickup weapons                  | Selected original GLBs and their color atlas |
-| [Space Station Kit](https://kenney.nl/assets/space-station-kit)           | Cargo cover, consoles and selectable station props            | Selected original GLBs and their color atlas |
 | [Sci-Fi Sounds](https://kenney.nl/assets/sci-fi-sounds)                   | Weapon fire, engines, machinery, shields, pickups and reloads | OGG converted to AAC/M4A for WebKit playback |
 | [Impact Sounds](https://kenney.nl/assets/impact-sounds)                   | Footsteps, impacts and landings                               | OGG converted to AAC/M4A                     |
 | [Voiceover Pack Fighter](https://kenney.nl/assets/voiceover-pack-fighter) | Prerecorded match announcements                               | Selected clips converted to AAC/M4A          |
 | [Voiceover Pack](https://kenney.nl/assets/voiceover-pack)                 | Prerecorded objective announcements                           | Selected clips converted to AAC/M4A          |
 
-Weapon GLBs use `weapons/Textures/colormap.png`; station GLBs use their own
-`station/Textures/colormap.png`. Keep both atlases and relative paths intact.
+Weapon GLBs use `weapons/Textures/colormap.png`. Keep that atlas and its relative
+paths intact. Station models were removed with the grid map overhaul; their
+original download provenance and license notice remain below.
 
 Downloaded source archive SHA-256:
 

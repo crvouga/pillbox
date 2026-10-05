@@ -294,7 +294,7 @@ async fn me(State(s): State<AppState>, h: HeaderMap) -> ApiResult<Json<User>> {
 }
 async fn templates() -> Json<Value> {
     Json(
-        json!({"map":starter_map(),"maps":arena_maps(),"modes":[Mode::builtin("Free For All",Objective::None,false),Mode::builtin("Team Deathmatch",Objective::None,true),Mode::builtin("Capture the Flag",Objective::Flags,true),Mode::builtin("King of the Hill",Objective::Hill,true)]}),
+        json!({"kit":building_kit(),"markers":marker_kit(),"grid":4,"map":starter_map(),"maps":arena_maps(),"modes":[Mode::builtin("Free For All",Objective::None,false),Mode::builtin("Team Deathmatch",Objective::None,true),Mode::builtin("Capture the Flag",Objective::Flags,true),Mode::builtin("King of the Hill",Objective::Hill,true)]}),
     )
 }
 async fn list_content(
@@ -323,6 +323,9 @@ async fn save_content(
         "maps" => {
             let m: Map = serde_json::from_value(body.document.clone())
                 .map_err(|e| ApiError::bad(e.to_string()))?;
+            if !m.grid {
+                return Err(ApiError::bad("New maps must use the grid construction kit"));
+            }
             m.validate().map_err(ApiError::bad)?;
         }
         "modes" => {

@@ -9,14 +9,14 @@ fn main() {
     w.join("capture".into(), "Capture".into()).unwrap();
     w.join("opponent".into(), "Vector".into()).unwrap();
     let p = w.players.get_mut("capture").unwrap();
-    p.position = Vec3::new(0., 3., -4.);
+    p.position = Vec3::new(2., 0., -30.);
     p.yaw = std::f32::consts::PI;
     p.weapon = args.get(4).map_or(Weapon::Rifle, |name| {
         serde_json::from_value(serde_json::Value::String(name.clone())).expect("weapon name")
     });
     let me = w.players["capture"].clone();
     let (camera, target) = if args.get(2).is_some_and(|s| s == "overview") {
-        (Some([38., 29., 38.]), Some([0., 2., 0.]))
+        (Some([62., 62., 70.]), Some([0., 6., 0.]))
     } else {
         (None, None)
     };

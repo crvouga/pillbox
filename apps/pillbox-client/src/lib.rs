@@ -339,15 +339,7 @@ fn receive(
     // Share surface handles so repeated kit meshes can be instanced together.
     let mut surface_materials = std::collections::BTreeMap::new();
     for o in map.objects {
-        let tint = if o.kind.spawn() {
-            if o.properties.team == Some(1) {
-                Color::srgb_u8(255, 126, 100)
-            } else {
-                Color::srgb_u8(74, 226, 239)
-            }
-        } else {
-            color(&o.properties.color)
-        };
+        let tint = color(&o.properties.color);
         let material = surface_materials
             .entry(o.properties.color.clone())
             .or_insert_with(|| {

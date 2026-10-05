@@ -35,8 +35,8 @@ All three arenas have a 64 × 80 m usable ground footprint, 8 m decks and 16 m
 opposing overlooks. Intermediate landings sit at 4 and 12 m. Two opposite,
 8 m-wide ramp routes connect every main level. The middle decks leave 7 m of
 clearance below them. Ground cover interrupts firing lanes; supports provide
-cover beneath the decks. Supplies reward climbing. Structural surfaces use a
-consistent matte palette and shadowed daylight, without decorative geometry.
+cover beneath the decks. Supplies reward climbing. The radar fits the full arena
+and shows elevated slabs. Structural surfaces use a consistent matte palette and shadowed daylight, without decorative geometry.
 
 - **Terraces:** one broad elevated crossing through the center.
 - **Crosscut:** two separated elevated crossings, longer ground approach ramps,

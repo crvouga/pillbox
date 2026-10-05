@@ -1,6 +1,45 @@
 # Verification record
 
-## Current overhaul evidence — 2026-10-05
+## Current map-design evidence — 2026-10-05
+
+The current arenas and authoring contract are described in [map design](map-design.md).
+Earlier records below retain their original test counts and artifacts.
+
+- All 33 core regression tests and full native workspace tests passed. Tests
+  cover all kit pieces/quarter turns, serialization, off-grid and resized pieces,
+  decoration and overlap rejection, embedded-capsule clearance, supported spawns,
+  7 m underpass headroom, actual controller ascent on both routes to 8 and 16 m
+  in each arena, and navigation ending beside every power weapon on its correct
+  surface. Sustained authoritative bot combat and prior gameplay regressions pass.
+- Formatting, warnings-denied Clippy, both release WASM backends/bindgen, and
+  browser JS syntax/format checks passed.
+- Six native and container HTTP/WebSocket/editor acceptance tests passed. They
+  cover publication/combat/durable results, bot capacity/combat, hostile attempts
+  to bypass the grid kit, face-aligned editor transforms, and unclipped radar
+  projections for every piece in all three arenas.
+- Atlas reported `Schemas are synced, no changes to be made.` against the
+  disposable local PostgreSQL database. No schema change or migration artifact.
+- Native Metal captures rendered all three arenas and the first-person view,
+  using the same scene systems and requiring every glTF dependency to load.
+  Final captures verify plain surfaces, readable shadow fill and visible guns.
+- The browser saved a grid-built draft, preserved its lower corner through a
+  90° rectangle rotation, kept dimensions read-only, duplicated by complete
+  width, and quantized an entered X of 9 m to 8 m. Practice joined/started on
+  Courtyard and Terraces; bot combat, saved results, WebGPU and audio decoding
+  were observed. Browser frames still intermittently suspend; this is not a
+  sustained browser FPS or manual mouse-control claim.
+- The final local Linux amd64 image `pillbox:map-kit` passed asset/WASM fetches,
+  alternate PORT, all six acceptance tests and active-match SIGTERM/restart
+  recovery. Image ID:
+  `sha256:997e540b97470e700b93870d5596a7ef83dbdb84893a79fcc629c268d9592230`.
+  Recovered shutdown result: `89fe4692-854b-4a98-803f-85b203da4b99`.
+- Release CPU probe: 16 players / 3,600 ticks took 3.17 s, 0.882 ms/tick,
+  18.9× realtime on this machine. This measures simulation, not browser rendering.
+
+Session evidence: `/Users/chrisvouga/.cache/pillbox-map-kit-641a/`.
+No deployment or remote publication was performed by this map-design run.
+
+## Earlier playability overhaul evidence — 2026-10-05
 
 The records below this section describe the earlier MVP. Current playability work
 is described in [overhaul](overhaul.md); deployment is excluded.

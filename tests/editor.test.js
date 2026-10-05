@@ -43,3 +43,24 @@ test("editor moves and rotates every kit piece by its faces and never changes it
     assert.equal(o.position[1], spec.feet ? 8 : 8 + spec.size[1] / 2);
   }
 });
+
+test("radar fits every rotated piece of the expanded arenas without clipping", async () => {
+  const { radarProjection } = await import("../web/hud.js");
+  const { maps } = await (await fetch(base + "/api/templates")).json();
+  for (const map of maps) {
+    const { ratio, center } = radarProjection(map, 160);
+    for (const o of map.objects.filter((o) => o.properties.piece)) {
+      const size = worldSize(o);
+      for (const sign of [-1, 1]) {
+        const x =
+          80 + (o.position[0] + (sign * size[0]) / 2 - center[0]) * ratio;
+        const z =
+          80 + (o.position[2] + (sign * size[2]) / 2 - center[1]) * ratio;
+        assert.ok(
+          x >= 7.99 && x <= 152.01 && z >= 7.99 && z <= 152.01,
+          `${map.name}: clipped ${o.id}`,
+        );
+      }
+    }
+  }
+});

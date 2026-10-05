@@ -26,6 +26,31 @@ const solids = new Set([
   "bridge",
   "barrier",
 ]);
+export function radarProjection(map, size) {
+  const low = [Infinity, Infinity],
+    high = [-Infinity, -Infinity];
+  for (const o of map.objects.filter((o) => solids.has(o.kind))) {
+    const c = Math.abs(Math.cos(o.rotation)),
+      s = Math.abs(Math.sin(o.rotation));
+    const half = [
+      (c * o.scale[0] + s * o.scale[2]) / 2,
+      (s * o.scale[0] + c * o.scale[2]) / 2,
+    ];
+    for (let axis = 0; axis < 2; axis++) {
+      const value = o.position[axis === 0 ? 0 : 2];
+      low[axis] = Math.min(low[axis], value - half[axis]);
+      high[axis] = Math.max(high[axis], value + half[axis]);
+    }
+  }
+  if (!Number.isFinite(low[0])) {
+    low.fill(-32);
+    high.fill(32);
+  }
+  return {
+    ratio: (size - 16) / Math.max(high[0] - low[0], high[1] - low[1], 1),
+    center: low.map((v, i) => (v + high[i]) / 2),
+  };
+}
 const sub = (a, b) => a.map((v, i) => v - b[i]);
 const dot = (a, b) => a.reduce((s, v, i) => s + v * b[i], 0);
 function hit(o, origin, dir, max = 100) {
@@ -76,6 +101,7 @@ export class ArenaHUD {
   }
   setMap(map) {
     this.map = map;
+    this.radarView = radarProjection(map, this.radar.width);
     this.root.replaceChildren();
     this.nodes.clear();
   }
@@ -205,19 +231,29 @@ export class ArenaHUD {
         this.nodes.delete(id);
       }
     const ctx = this.radar.getContext("2d"),
-      size = this.radar.width;
+      size = this.radar.width,
+      { ratio, center } = this.radarView;
+    const projectRadar = (position) => [
+      size / 2 + (position[0] - center[0]) * ratio,
+      size / 2 + (position[2] - center[1]) * ratio,
+    ];
     ctx.clearRect(0, 0, size, size);
     ctx.fillStyle = "#0c1722aa";
     ctx.fillRect(0, 0, size, size);
     ctx.strokeStyle = "#60748855";
     ctx.lineWidth = 1;
     for (const o of this.map.objects.filter(
-      (o) => solids.has(o.kind) && o.kind !== "floor",
+      (o) => solids.has(o.kind) && (o.kind !== "floor" || o.position[1] > 0),
     )) {
       ctx.save();
-      ctx.translate(size / 2 + o.position[0] * 2, size / 2 + o.position[2] * 2);
+      ctx.translate(...projectRadar(o.position));
       ctx.rotate(-o.rotation);
-      ctx.strokeRect(-o.scale[0], -o.scale[2], o.scale[0] * 2, o.scale[2] * 2);
+      ctx.strokeRect(
+        (-o.scale[0] * ratio) / 2,
+        (-o.scale[2] * ratio) / 2,
+        o.scale[0] * ratio,
+        o.scale[2] * ratio,
+      );
       ctx.restore();
     }
     for (const o of this.map.objects.filter(
@@ -225,14 +261,14 @@ export class ArenaHUD {
     )) {
       ctx.fillStyle = o.kind === "hill" ? "#7fe8e8" : "#ffc879";
       ctx.fillRect(
-        size / 2 + o.position[0] * 2 - 2,
-        size / 2 + o.position[2] * 2 - 2,
+        projectRadar(o.position)[0] - 2,
+        projectRadar(o.position)[1] - 2,
         4,
         4,
       );
     }
     ctx.save();
-    ctx.translate(size / 2 + p.position[0] * 2, size / 2 + p.position[2] * 2);
+    ctx.translate(...projectRadar(p.position));
     ctx.rotate(p.yaw);
     ctx.fillStyle = "#c8f788";
     ctx.beginPath();

@@ -1,0 +1,432 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#101320" />
+    <title>Pillbox — Take the high ground.</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <canvas id="game" aria-label="3D arena"></canvas>
+    <div id="shell">
+      <header>
+        <a class="brand" href="/" aria-label="Pillbox home"
+          ><span class="pill-logo"></span>PILLBOX<span class="alpha"
+            >ARENA 03</span
+          ></a
+        >
+        <nav>
+          <button data-page="servers" class="nav active">Play</button
+          ><button data-page="sandbox" class="nav">Sandbox</button
+          ><button data-page="modes" class="nav">Game modes</button>
+        </nav>
+        <span id="identity">Not connected</span>
+      </header>
+      <main id="servers" class="page">
+        <section class="hero">
+          <div class="eyebrow">A MULTIPLAYER PLAYGROUND</div>
+          <h1>Take the<br /><span>high ground.</span></h1>
+          <p>
+            Sixteen meters of high ground. Six weapons.<br />Jump into a
+            skirmish, or build your own arena.
+          </p>
+          <div class="practice-picker">
+            <select id="practice-map" aria-label="Practice arena">
+              <option value="0">Terraces — broad crossing</option>
+              <option value="1">Crosscut — twin crossings</option>
+              <option value="2">Courtyard — elevated ring</option></select
+            ><button id="quick-play" class="primary">
+              PLAY NOW <span>↗</span>
+            </button>
+          </div>
+          <p class="practice-note">
+            Solo practice · 3 opponents · 5-minute skirmish
+          </p>
+          <div class="actions">
+            <button id="host-open" class="primary">＋ Create a server</button
+            ><button data-page="sandbox">Enter the sandbox ↗</button>
+          </div>
+          <div class="hero-note">
+            <span class="live-dot"></span> Vertical arenas. Real physics.
+            Player-made worlds.
+          </div>
+        </section>
+        <section class="browser-panel">
+          <div class="section-title">
+            <div>
+              <span class="eyebrow">FIND YOUR NEXT MATCH</span>
+              <h2>
+                Server browser <span id="server-count" class="count">0</span>
+              </h2>
+            </div>
+            <button id="refresh">↻ Refresh</button>
+          </div>
+          <div id="server-list"></div>
+          <div class="join-code">
+            <input
+              id="join-code"
+              placeholder="Have an invite? Paste a server ID or link"
+              aria-label="Server invite"
+            /><button id="join-direct">Join server →</button>
+          </div>
+        </section>
+        <footer>
+          YOU MAKE THE UNIVERSE. WE BRING THE PILLS.<span
+            >WASD · SPACE · MOUSE · GOOD COMPANY</span
+          >
+        </footer>
+      </main>
+      <main id="sandbox" class="page hidden">
+        <div class="editor-top">
+          <div>
+            <span class="eyebrow">WORLD BUILDER</span>
+            <h2>Your next arena starts here.</h2>
+          </div>
+          <div class="actions">
+            <select id="map-load" aria-label="Load a map">
+              <option value="">Load saved map…</option></select
+            ><button id="map-new">New</button
+            ><button id="map-save">Save draft</button
+            ><button id="map-publish" class="primary">Publish map ↗</button
+            ><button id="map-test">Test / play</button>
+          </div>
+        </div>
+        <div class="editor-grid">
+          <aside class="panel">
+            <label>Map name<input id="map-name" maxlength="64" /></label
+            ><label>Sky color<input type="color" id="map-sky" /></label>
+            <h3>Construction kit</h3>
+            <select id="primitive" aria-label="Building piece"></select>
+            <button id="place" class="primary full">＋ Place piece</button>
+            <p class="muted">
+              Fixed sizes. 4 m horizontal cells, 1 m height steps, 90° turns.
+              Coordinates use the lower corner so faces meet exactly.
+            </p>
+            <h3>Gameplay markers</h3>
+            <select id="marker" aria-label="Gameplay marker"></select>
+            <button id="place-marker" class="full">＋ Place marker</button>
+            <label
+              >Build base height (m)<input
+                id="layer"
+                type="number"
+                step="1"
+                value="0"
+            /></label>
+            <label
+              ><input id="all-layers" type="checkbox" /> Show / select every
+              level</label
+            >
+            <label
+              >Grid extent<select id="extent">
+                <option value="48" selected>96 m</option>
+                <option value="80">160 m</option>
+                <option value="152">304 m</option>
+              </select></label
+            >
+            <label>Objects<select id="object-list" size="8"></select></label>
+          </aside>
+          <div class="grid-panel">
+            <div class="grid-label">
+              <span>TOP VIEW · 4 M CELLS</span
+              ><span id="editor-status">Select or place a piece</span>
+            </div>
+            <canvas
+              id="grid"
+              width="800"
+              height="800"
+              aria-label="Map editor placement grid"
+            ></canvas>
+            <div class="grid-label">
+              <span>Drag to move · Delete to remove</span
+              ><button id="preview-toggle">3D preview</button>
+            </div>
+          </div>
+          <aside class="panel inspector">
+            <h3>Object inspector</h3>
+            <div id="object-empty" class="muted">
+              Select an object on the grid.
+            </div>
+            <div id="object-fields" class="hidden">
+              <label>Object ID<input id="object-id" readonly /></label>
+              <div class="triplet">
+                <label>Base X<input id="px" type="number" step="4" /></label
+                ><label>Base Y<input id="py" type="number" step="1" /></label
+                ><label>Base Z<input id="pz" type="number" step="4" /></label>
+              </div>
+              <div class="triplet">
+                <label>Width<input id="sx" type="number" readonly /></label>
+                <label>Height<input id="sy" type="number" readonly /></label>
+                <label>Depth<input id="sz" type="number" readonly /></label>
+              </div>
+              <label
+                >Rotation (degrees)<input
+                  id="rotation"
+                  type="number"
+                  step="90" /></label
+              ><label>HUD label<input id="object-label" maxlength="64" /></label
+              ><label>Color<input id="object-color" type="color" /></label
+              ><label
+                >Team<select id="object-team">
+                  <option value="">Any</option>
+                  <option value="0">Cyan</option>
+                  <option value="1">Coral</option>
+                </select></label
+              ><label>Weapon<select id="object-weapon"></select></label
+              ><label
+                >Teleporter exit ID<input
+                  id="object-target"
+                  placeholder="Exit object ID" /></label
+              ><label
+                >Strength / gravity<input
+                  id="object-strength"
+                  type="number"
+                  min="0.1"
+                  max="40"
+                  step="0.5" /></label
+              ><label
+                >Pickup respawn (seconds)<input
+                  id="object-respawn"
+                  type="number"
+                  min="1"
+                  max="300"
+              /></label>
+              <div class="actions">
+                <button id="duplicate">Duplicate</button
+                ><button id="delete" class="danger">Delete</button>
+              </div>
+            </div>
+          </aside>
+        </div>
+        <p id="map-version" class="muted"></p>
+      </main>
+      <main id="modes" class="page hidden">
+        <div class="editor-top">
+          <div>
+            <span class="eyebrow">RULES, WITHOUT SCRIPTS</span>
+            <h2>Make it your kind of game.</h2>
+          </div>
+          <select id="mode-load" aria-label="Load a mode">
+            <option value="">Load saved mode…</option>
+          </select>
+        </div>
+        <div class="mode-grid">
+          <section class="panel">
+            <h3>Start with a ruleset</h3>
+            <div id="mode-templates" class="template-buttons"></div>
+            <label>Mode name<input id="mode-name" maxlength="64" /></label>
+            <div class="triplet">
+              <label
+                >Score limit<input
+                  id="mode-score"
+                  type="number"
+                  min="1"
+                  max="1000" /></label
+              ><label
+                >Time (sec)<input
+                  id="mode-time"
+                  type="number"
+                  min="10"
+                  max="3600" /></label
+              ><label
+                >Respawn (sec)<input
+                  id="mode-respawn"
+                  type="number"
+                  min="1"
+                  max="30"
+              /></label>
+            </div>
+            <label class="check"
+              ><input id="mode-teams" type="checkbox" /> Teams</label
+            ><label class="check"
+              ><input id="mode-friendly" type="checkbox" /> Friendly fire</label
+            ><label
+              >Objective<select id="mode-objective">
+                <option value="none">None</option>
+                <option value="flags">Capture the Flag</option>
+                <option value="hill">King of the Hill</option>
+              </select></label
+            >
+            <div class="actions">
+              <button id="mode-save">Save draft</button
+              ><button id="mode-publish" class="primary">Publish mode ↗</button>
+            </div>
+            <p id="mode-version" class="muted"></p>
+          </section>
+          <section class="panel">
+            <h3>Event → conditions → effects</h3>
+            <p class="muted">
+              Built-in modes use these same rules. Score and time limits apply
+              to every match. Each rule runs once per event; score events have
+              bounded recursion.
+            </p>
+            <label
+              >Rules (declarative JSON)<textarea
+                id="mode-rules"
+                spellcheck="false"
+                rows="20"
+              ></textarea>
+            </label>
+            <details>
+              <summary>Rule reference</summary>
+              <p>
+                Events: match_started, player_spawned, player_killed,
+                player_entered_zone, player_left_zone, player_picked_up_item,
+                player_dropped_item, timer_elapsed (once/second), score_changed,
+                flag_captured, hill_held.
+              </p>
+              <p>
+                Conditions: opponent, alive, carrying_flag, team {team},
+                score_at_least {value}, time_at_least {seconds}, zone_owned.
+              </p>
+              <p>
+                Effects: add_score {amount, team}, end_match, respawn,
+                give_weapon {weapon}, remove_item, reset_flags, announce {text}.
+                Every condition/effect has a "type" field.
+              </p>
+            </details>
+          </section>
+        </div>
+      </main>
+    </div>
+    <div id="match-ui" class="hidden">
+      <div class="match-top">
+        <div>
+          <span class="brand">PILLBOX</span><span id="match-title"></span>
+        </div>
+        <div class="actions">
+          <button id="match-start" class="primary">Start match</button
+          ><button id="match-finish">End match</button
+          ><button id="invite">Copy invite</button
+          ><button id="leave">Leave</button>
+        </div>
+      </div>
+      <div id="announcement" role="status"></div>
+      <div id="phase-banner"></div>
+      <div id="kill-feed"></div>
+      <div id="crosshair"><i></i><i></i><i></i><i></i></div>
+      <div id="hitmarker">×</div>
+      <div id="object-labels" aria-hidden="true"></div>
+      <div id="object-context"></div>
+      <canvas
+        id="radar"
+        width="144"
+        height="144"
+        aria-label="Arena radar"
+      ></canvas>
+      <div id="damage-flash"></div>
+      <div id="hud">
+        <div>
+          <span class="eyebrow">SHIELD</span
+          ><meter id="shield" min="0" max="100" value="100"></meter
+          ><span id="health">100 HEALTH</span>
+        </div>
+        <div class="match-center">
+          <span id="clock">10:00</span><span id="team-score"></span
+          ><span id="net-status"></span>
+        </div>
+        <div class="ammo">
+          <span id="weapon">PISTOL</span><strong id="ammo">12 / 48</strong>
+        </div>
+      </div>
+      <div id="controls">
+        Click arena to aim · WASD move · Space jump · Click fire · R reload ·
+        1–6 weapons · RMB aim · Tab scores · Esc release mouse
+      </div>
+      <section id="scoreboard" class="panel hidden">
+        <h2>Scoreboard</h2>
+        <div id="score-rows"></div>
+        <p id="result-status"></p>
+      </section>
+      <div class="game-settings">
+        <button id="sound">Announcer: on</button
+        ><button id="mute">Audio ON</button
+        ><button id="keyboard-aim">Keyboard aim</button
+        ><label
+          >Volume<input
+            id="volume"
+            type="range"
+            min="0"
+            max="1"
+            step="0.05"
+            value="0.7" /></label
+        ><label
+          >Mouse<input
+            id="sensitivity"
+            type="range"
+            min="1"
+            max="10"
+            step="0.5"
+            value="5"
+        /></label>
+      </div>
+    </div>
+    <dialog id="welcome">
+      <form id="welcome-form">
+        <span class="pill-logo large"></span
+        ><span class="eyebrow">WELCOME TO THE PLAYGROUND</span>
+        <h2>Pick your pill name.</h2>
+        <p>Your browser keeps your player identity and creations.</p>
+        <label
+          >Player name<input
+            id="player-name"
+            maxlength="64"
+            required
+            autocomplete="nickname"
+            placeholder="Cosmic Pickle" /></label
+        ><button class="primary full">Let’s play →</button>
+        <p class="muted">Desktop keyboard + mouse recommended.</p>
+      </form>
+    </dialog>
+    <dialog id="host-dialog">
+      <form id="host-form">
+        <span class="eyebrow">YOUR WORLD. YOUR RULES.</span>
+        <h2>Create a server</h2>
+        <label
+          >Server name<input
+            id="server-name"
+            maxlength="64"
+            required
+            value="A strange little arena" /></label
+        ><label>Published map<select id="server-map" required></select></label
+        ><label
+          >Published mode<select id="server-mode" required></select
+        ></label>
+        <div class="triplet">
+          <label
+            >Players<input
+              id="server-max"
+              type="number"
+              min="2"
+              max="16"
+              value="8" /></label
+          ><label
+            >Visibility<select id="server-visibility">
+              <option value="public">Public</option>
+              <option value="unlisted">Invite only</option>
+            </select></label
+          >
+        </div>
+        <label
+          >Practice opponents<select id="server-bots">
+            <option value="0">Humans only</option>
+            <option value="1">1 bot</option>
+            <option value="2">2 bots</option>
+            <option value="3">3 bots</option>
+            <option value="4">4 bots</option>
+          </select></label
+        >
+        <p class="muted">
+          Invite-only servers are unlisted. Anyone with the link can join.
+        </p>
+        <div class="actions">
+          <button type="button" id="host-cancel">Cancel</button
+          ><button class="primary" id="host-submit">Create & join →</button>
+        </div>
+      </form>
+    </dialog>
+    <div id="toast" role="status" class="hidden"></div>
+    <output id="diagnostics" hidden aria-hidden="true"></output>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,54 @@
+name: Validate
+on:
+  pull_request:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: test-only
+          POSTGRES_DB: pillbox
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 3s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.94.0
+        with:
+          components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: sudo apt-get update && sudo apt-get install -y libx11-dev libxi-dev libxrandr-dev libxcursor-dev libxkbcommon-dev libudev-dev
+      - run: npm ci --ignore-scripts && npm run check && npm audit --audit-level=high
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace --locked
+      - run: cargo build --locked -p pillbox-client --target wasm32-unknown-unknown
+      - uses: ariga/setup-atlas@v0
+      - run: ./scripts/schema-check.sh
+        env:
+          TEST_DATABASE_URL: postgres://postgres:test-only@localhost:5432/pillbox?sslmode=disable&search_path=public
+      - run: cargo build --locked -p pillbox-server
+      - name: Network and creator acceptance
+        env:
+          DATABASE_URL: postgres://postgres:test-only@localhost:5432/pillbox?sslmode=disable
+        run: |
+          target/debug/pillbox-server > /tmp/pillbox.log 2>&1 &
+          pid=$!
+          trap 'kill "$pid" || true' EXIT
+          for i in $(seq 1 30); do curl -fsS localhost:8080/health && break || sleep 1; done
+          npm test
+      - run: docker build --platform linux/amd64 -t pillbox .
+      - name: Container acceptance
+        env:
+          DATABASE_URL: postgres://postgres:test-only@172.17.0.1:5432/pillbox?sslmode=disable
+        run: ./scripts/docker-smoke.sh
